@@ -1,0 +1,3 @@
+interface:
+  display_name: "Herdr Critic"
+  short_description: "Independent read-only Sonnet 5.5 critique of plans and diffs"

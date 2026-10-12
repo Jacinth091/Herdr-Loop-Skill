@@ -1,0 +1,3 @@
+interface:
+  display_name: "herdr worker"
+  short_description: "Herdr session role: worker"

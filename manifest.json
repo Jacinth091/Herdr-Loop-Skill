@@ -1,0 +1,83 @@
+{
+  "name": "herdr-role-pack",
+  "version": "2.8.0",
+  "description": "Herdr role skills with optional offline SQLite ledger prototype for future token-efficient coordination",
+  "skills": [
+    "herdr-engineering-loop",
+    "herdr-manager",
+    "herdr-delegator",
+    "herdr-worker",
+    "herdr-verifier",
+    "herdr-critic"
+  ],
+  "target_agents": [
+    "claude",
+    "codex",
+    "agy"
+  ],
+  "installers": [
+    "install.ps1",
+    "install.sh"
+  ],
+  "optional_tools": [
+    "tools/role_bind.py",
+    "tools/activate_roles.py",
+    "tools/access_probe.py",
+    "tools/progress_view.py",
+    "skills/herdr-engineering-loop/scripts/herdr_ledger.py"
+  ],
+  "policy": {
+    "default_active_implementation_workers": 1,
+    "concurrent_verification_jobs": 1,
+    "worker_runs_tests": false,
+    "worker_pushes": false,
+    "workers_must_be_herdr_spawned": true,
+    "codex_native_subagents_allowed": false,
+    "manager_approves_plan": true,
+    "delegator_owns_integration": true,
+    "human_approves_promotion": true,
+    "max_supported_active_implementation_workers": 3,
+    "parallel_workers_need_human_approval": true,
+    "non_code_isolated_copy_requires_approval": true,
+    "completion_requires_separate_content_and_verification_gates": true,
+    "session_ledger_preserved_on_rebind": true,
+    "role_ready_handshake_before_worker_edits": true,
+    "signal_recipient_explicit_in_role_packets": true,
+    "signal_events_durable_receipts": true,
+    "no_automatic_elevation_on_access_denied": true,
+    "no_automatic_sandbox_disable_on_access_denied": true,
+    "transport_is_herdr_agent_prompt_not_native_signals": true,
+    "codex_overridden_worker_spawner_requires_non_codex": true,
+    "manager_single_spawn_exception_when_claude_manager_and_codex_delegator": true,
+    "codex_worker_model_default": "gpt-6-luna",
+    "codex_worker_reasoning_default": "xhigh",
+    "codex_worker_reasoning_optional": "max",
+    "claude_worker_model_default": "claude-haiku-5-5",
+    "critic_model_default": "claude-sonnet-5-5",
+    "critic_role_read_only": true,
+    "effective_model_verified_before_task_start": true,
+    "claude_verifier_model_default": "claude-haiku-5-5",
+    "dedicated_haiku_tester_uses_verifier_role": true,
+    "verifier_is_not_an_implementation_worker": true,
+    "verification_lock_required_for_haiku_tester": true,
+    "execution_requires_human_intent_not_skill_generated": true,
+    "tasks_remain_stable_across_attempts": true,
+    "one_active_writer_per_checkout": true,
+    "candidate_write_frozen_during_verification": true,
+    "cancellation_preserves_work_and_tracks_shutdown": true,
+    "relay_runtime_not_required": true,
+    "task_ids_internal_only_in_user_updates": true,
+    "user_facing_slice_titles_from_approved_plan": true,
+    "progress_view_reads_session_ledger_only": true,
+    "no_duplicate_public_status_store": true,
+    "current_session_authority": "markdown",
+    "sqlite_ledger_offline_pilot_available": true,
+    "sqlite_pilot_is_live_orchestration": false,
+    "sqlite_pilot_does_not_run_or_start_agents": true,
+    "never_dual_mutable_run_authorities": true
+  },
+  "future_integrations_not_required": [
+    "Signals",
+    "Relay"
+  ]
+}

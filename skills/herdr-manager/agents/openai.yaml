@@ -1,0 +1,3 @@
+interface:
+  display_name: "herdr manager"
+  short_description: "Herdr session role: manager"

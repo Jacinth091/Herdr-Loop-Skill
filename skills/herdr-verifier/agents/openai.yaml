@@ -1,0 +1,3 @@
+interface:
+  display_name: "herdr verifier"
+  short_description: "Herdr session role: verifier"

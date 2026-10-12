@@ -1,0 +1,3 @@
+interface:
+  display_name: "Herdr Engineering Loop"
+  short_description: "Coordinate Herdr roles and worktrees; optional offline SQLite ledger pilot"

@@ -1,0 +1,43 @@
+{
+  "run_id": "example-haiku-worker",
+  "base_ref": "staging",
+  "integration_branch": "herdr/feature-example/integration",
+  "max_active_workers": 1,
+  "verification_concurrency": 1,
+  "agents": {
+    "manager": {
+      "name": "architect",
+      "kind": "claude",
+      "pane_id": "",
+      "workspace_id": ""
+    },
+    "delegator": {
+      "name": "dispatcher",
+      "kind": "codex",
+      "pane_id": "",
+      "workspace_id": ""
+    },
+    "workers": [
+      {
+        "name": "worker_t01",
+        "kind": "claude",
+        "task_id": "T01",
+        "model": "claude-haiku-5-5",
+        "worktree": "",
+        "pane_id": "",
+        "workspace_id": "",
+        "task_title": "Improve account sign-in error handling",
+        "task_outcome": "Show a clear recovery message when a session expires without changing existing authentication behavior."
+      }
+    ],
+    "verifier": null,
+    "critic": {
+      "name": "critic_t01",
+      "kind": "claude",
+      "model": "claude-sonnet-5-5",
+      "pane_id": "",
+      "workspace_id": ""
+    }
+  },
+  "parallel_workers_authorized": false
+}
