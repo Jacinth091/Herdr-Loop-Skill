@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Select a run's authoritative ledger and perform guarded backend transfers.
 
-Supported transfer scope is the pristine planning checkpoint: no approved plan or
-grant, no tasks, attempts, claims, verification, decisions, or activation receipts.
-Every other state is refused with a reconciliation blocker and the source is left
-untouched. Transfers are two-phase and journaled in transfers/<id>/receipt.json.
+Transfer supports pristine planning and strictly validated structured checkpoints.
+Dispatched history requires reachable Herdr observations, inactive ownership and
+unchanged evidence. External worker descendants without persistent observation
+remain reconciliation blockers. Cutovers are journaled under transfers/<id>.
 """
 
 import argparse
@@ -21,6 +21,8 @@ import sys
 SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))  # lets lazy `import herdr_ledger` resolve from any caller
+
+import transfer_checkpoint
 
 SELECTOR_FILE = "backend.active.json"
 VALID_BACKENDS = ("sqlite", "markdown")
@@ -365,25 +367,56 @@ def assess(run_dir, target):
         raise TransferRefused("RUN_UNINITIALIZED: no canonical ledger to transfer")
     epoch = selector["epoch"] if selector else 1
     blockers = []
+    import verification_guard
+    machine_lock = verification_guard.lock_path()
+    if machine_lock.exists():
+        try:
+            owner = json.loads(machine_lock.read_text(encoding="utf8"))
+            if owner.get("run_id") == str(run_dir.resolve()):
+                blockers.append("TRANSFER_REQUIRES_RECONCILIATION: machine verification gate held by run")
+        except (OSError, ValueError):
+            blockers.append("TRANSFER_REQUIRES_RECONCILIATION: machine verification owner unreadable")
     profile = None
     row = None
+    state = None
     if source == "markdown":
         try:
             text = (run_dir / "SESSION.md").read_text(encoding="utf-8")
-            profile = profile_from_markdown(text, run_dir.name)
-        except (TransferRefused, UnicodeDecodeError) as exc:
+            if transfer_checkpoint.MARKER in text:
+                profile, state = transfer_checkpoint.parse(text)
+            else:
+                profile = profile_from_markdown(text, run_dir.name)
+        except (RuntimeError, UnicodeDecodeError, ValueError, KeyError, TypeError) as exc:
             blockers.append(str(exc))
     else:
         if selector is None:
             blockers.append("SQLITE_PILOT_NOT_LIVE: legacy SQLite pilot requires explicit audit before transfer")
         sql_blockers, row = sqlite_planning_state(run_dir / "ledger.sqlite")
-        blockers += sql_blockers
+        if sql_blockers and selector is not None:
+            try:
+                state = transfer_checkpoint.snapshot(run_dir / "ledger.sqlite")
+            except (RuntimeError, sqlite3.DatabaseError) as exc:
+                blockers.append(str(exc))
+        else:
+            blockers += sql_blockers
         profile = selector.get("planning_profile") if selector else None
         if row and profile and (row["id"] != run_dir.name or row["max_workers"] != profile.get("max_active_workers")
                                 or row["repo"] != str(Path(str(profile.get("repo", ""))).resolve())):
             blockers.append("PROFILE_MISMATCH: ledger row and planning profile disagree")
+    if state is not None:
+        try:
+            transfer_checkpoint.validate(run_dir, state)
+        except Exception as exc:
+            blockers.append("TRANSFER_REQUIRES_RECONCILIATION: " + str(exc))
     if profile is not None:
         blockers += profile_blockers(profile)
+        if state and state.get("run"):
+            current = state["run"][0]
+            if (profile.get("run_id") != current["id"] or profile.get("max_active_workers") != current["max_workers"]
+                    or str(Path(profile.get("repo", "")).resolve()) != current["repo"]):
+                blockers.append("TRANSFER_REQUIRES_RECONCILIATION: checkpoint profile and run metadata differ")
+    else:
+        blockers.append("TRANSFER_REQUIRES_RECONCILIATION: planning profile is missing")
     for name in SIDECARS:
         if (run_dir / name).exists():
             blockers.append("SIDECAR_PRESENT: " + name + " (close writers and checkpoint before transfer)")
@@ -393,11 +426,21 @@ def assess(run_dir, target):
         blockers.append("TARGET_OCCUPIED: ledger.sqlite exists")
     fingerprint = source_fingerprint(run_dir, source)
     return {"run_id": run_dir.name, "source": source, "target": target, "epoch": epoch,
-            "fingerprint": fingerprint, "blockers": blockers, "profile": profile}
+            "fingerprint": fingerprint, "blockers": blockers, "profile": profile, "checkpoint": state}
 
 
-def validate_ledger(path_dir, backend, profile):
+def validate_ledger(path_dir, backend, profile, checkpoint_digest=None):
     """Strict check of a staged or active canonical ledger against the planning profile."""
+    if checkpoint_digest:
+        if backend == "markdown":
+            parsed_profile, state = transfer_checkpoint.parse((path_dir / "SESSION.md").read_text(encoding="utf-8"))
+            if parsed_profile != profile:
+                raise TransferRefused("TARGET_INVALID: checkpoint profile differs")
+        else:
+            state = transfer_checkpoint.snapshot(path_dir / "ledger.sqlite")
+        if transfer_checkpoint.digest(state) != checkpoint_digest:
+            raise TransferRefused("TARGET_INVALID: checkpoint history differs")
+        return
     if backend == "markdown":
         text = (path_dir / "SESSION.md").read_text(encoding="utf-8")
         if render_session(profile) != text:
@@ -449,7 +492,8 @@ def _receipt_base(assessment, approval_sha, tid):
             "from": assessment["source"], "to": assessment["target"],
             "from_epoch": assessment["epoch"], "to_epoch": assessment["epoch"] + 1,
             "source_fingerprint": assessment["fingerprint"], "approval_sha256": approval_sha,
-            "profile": assessment["profile"], "archive": {}, "staged": None, "phase": "PREPARING"}
+            "profile": assessment["profile"], "checkpoint_digest": transfer_checkpoint.digest(assessment["checkpoint"]) if assessment["checkpoint"] else None,
+            "archive": {}, "staged": None, "phase": "PREPARING"}
 
 
 def _ledger_name(backend):
@@ -458,6 +502,12 @@ def _ledger_name(backend):
 
 def _stage_target(staged_dir, assessment):
     profile = assessment["profile"]
+    if assessment["checkpoint"]:
+        if assessment["target"] == "markdown":
+            (staged_dir / "SESSION.md").write_text(transfer_checkpoint.render(profile, assessment["checkpoint"]), encoding="utf-8", newline="")
+        else:
+            transfer_checkpoint.restore(staged_dir / "ledger.sqlite", assessment["checkpoint"])
+        return
     if assessment["target"] == "markdown":
         (staged_dir / "SESSION.md").write_text(render_session(profile), encoding="utf-8")
     else:
@@ -527,7 +577,7 @@ def switch(run_dir, target, approval=None, checkpoint=None):
             if (run_dir / SELECTOR_FILE).exists():
                 shutil.copyfile(run_dir / SELECTOR_FILE, tdir / "archive" / SELECTOR_FILE)
             _stage_target(tdir / "staged", assessment)
-            validate_ledger(tdir / "staged", target, assessment["profile"])
+            validate_ledger(tdir / "staged", target, assessment["profile"], receipt.get("checkpoint_digest"))
         except Exception as exc:
             # The source has not been retired, so abandon this attempt in-process.
             _rollback(tdir, receipt)
@@ -538,6 +588,12 @@ def switch(run_dir, target, approval=None, checkpoint=None):
         write_receipt(tdir, receipt)
         checkpoint("PREPARED")
 
+        if assessment["checkpoint"]:
+            try:
+                transfer_checkpoint.validate(run_dir, assessment["checkpoint"])
+            except Exception as exc:
+                _rollback(tdir, receipt)
+                raise TransferRefused("TRANSFER_REQUIRES_RECONCILIATION: observation changed before retirement: " + str(exc)) from exc
         name = _ledger_name(assessment["source"])
         retired = tdir / "retired"
         retired.mkdir()
@@ -565,7 +621,7 @@ def _rollback(tdir, receipt):
 def _activate_target(run_dir, tdir, receipt):
     target_name = receipt["staged"]
     if (run_dir / target_name).exists():
-        validate_ledger(run_dir, receipt["to"], receipt["profile"])
+        validate_ledger(run_dir, receipt["to"], receipt["profile"], receipt.get("checkpoint_digest"))
         return
     os.replace(tdir / "staged" / target_name, run_dir / target_name)
 
@@ -612,7 +668,11 @@ def recover(run_dir, clear_stale_lock=False):
             if not (tdir / "staged" / receipt["staged"]).exists():
                 raise RuntimeError("RECOVERY_BLOCKED: staged target is missing")
             os.replace(tdir / "staged" / receipt["staged"], run_dir / receipt["staged"])
-        validate_ledger(run_dir, receipt["to"], receipt["profile"])
+        validate_ledger(run_dir, receipt["to"], receipt["profile"], receipt.get("checkpoint_digest"))
+        if receipt.get("checkpoint_digest"):
+            state = (transfer_checkpoint.snapshot(run_dir / "ledger.sqlite") if receipt["to"] == "sqlite" else
+                     transfer_checkpoint.parse((run_dir / "SESSION.md").read_text(encoding="utf8"))[1])
+            transfer_checkpoint.validate(run_dir, state, observe=False)
         return _commit(run_dir, tdir, receipt)
 
 

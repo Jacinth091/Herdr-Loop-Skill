@@ -5,12 +5,15 @@ Real Herdr lifecycle is not exercised here; see docs/SQLITE_WINDOWS_GATE.md.
 """
 import importlib.util
 import json
+import os
 from pathlib import Path
 import sqlite3
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
+from contextlib import closing
 
 ROOT = Path(__file__).resolve().parents[1]
 BIND = ROOT / "tools" / "role_bind.py"
@@ -85,6 +88,118 @@ class BackendTransferTests(unittest.TestCase):
             return conn.execute("SELECT id, repo, max_workers, state, plan_sha, grant_ref FROM run").fetchall()
         finally:
             conn.close()
+
+    def advanced(self, dispatched=False):
+        self.bind("sqlite")
+        import herdr_ledger
+        for name, text in (("PLAN.md", "Synthetic approved plan"), ("GRANT.md", "Synthetic human grant"), ("TASK.md", "Synthetic brief")):
+            (self.run / name).write_text(text, encoding="utf8")
+        # Build a typed offline fixture before selecting it; no live approvals are inferred.
+        packet = self.run / "ACTIVATION.json"
+        saved = packet.read_bytes()
+        packet.unlink()
+        selector = self.run / "backend.active.json"
+        selected = selector.read_bytes()
+        selector.unlink()
+        def cmd(*argv):
+            args = herdr_ledger.parser().parse_args(["--run-dir", str(self.run), *argv])
+            return herdr_ledger.operation(self.run, args)
+        cmd("plan-approve", "--plan", "PLAN.md", "--decision-id", "Plan1", "--authority", "MANAGER", "--actor", "manager", "--attestor", "human", "--rationale", "PLAN.md", "--request-id", "plan1")
+        cmd("run-authorize", "--grant-ref", "GRANT.md", "--decision-id", "Grant1", "--actor", "human", "--attestor", "delegator", "--request-id", "grant1")
+        cmd("task-add", "--task", "T01", "--title", "Prevent duplicate writes", "--outcome", "One durable record", "--brief", "TASK.md", "--request-id", "task1")
+        if dispatched:
+            subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+            subprocess.run(["git", "-C", str(self.repo), "config", "user.name", "Fixture"], check=True)
+            subprocess.run(["git", "-C", str(self.repo), "config", "user.email", "fixture@example.invalid"], check=True)
+            (self.repo / ".gitignore").write_text(".herdr-loop/\n", encoding="utf8")
+            subprocess.run(["git", "-C", str(self.repo), "add", ".gitignore"], check=True)
+            subprocess.run(["git", "-C", str(self.repo), "commit", "-q", "-m", "fixture"], check=True)
+            cmd("attempt-reserve", "--task", "T01", "--attempt", "T01-A1", "--checkout", str(self.repo), "--agent", "worker", "--provider", "claude", "--request-id", "reserve1")
+            with mock.patch.object(herdr_ledger, "observe_unstarted", return_value="mocked absent worker"):
+                cmd("attempt-release", "--attempt", "T01-A1", "--generation", "1", "--observation", "mocked absent worker", "--request-id", "release1")
+        packet.write_bytes(saved)
+        selector.write_bytes(selected)
+        return herdr_ledger
+
+    def approved_switch(self, target):
+        assessment = run_backend.assess(self.run, target)
+        self.assertEqual(assessment["blockers"], [])
+        approval = self.root / ("advanced-" + target + ".md")
+        approval.write_text(run_backend.approval_line(assessment), encoding="utf8")
+        return run_backend.switch(self.run, target, approval)
+
+    def test_structured_plan_and_grant_round_trip_preserves_typed_history(self):
+        ledger = self.advanced()
+        import transfer_checkpoint
+        before = transfer_checkpoint.snapshot(self.run / "ledger.sqlite")
+        with mock.patch.object(ledger, "herdr_json", return_value={"agents": [], "panes": []}), mock.patch.object(ledger, "observe_unstarted"):
+            self.approved_switch("markdown")
+            text = (self.run / "SESSION.md").read_text(encoding="utf8")
+            self.assertIn("Prevent duplicate writes", text)
+            self.assertIn("Execution grant: GRANT.md", text)
+            self.approved_switch("sqlite")
+        self.assertEqual(before, transfer_checkpoint.snapshot(self.run / "ledger.sqlite"))
+
+    def test_reserved_but_unstarted_dispatch_transfers_after_observed_release(self):
+        ledger = self.advanced(dispatched=True)
+        with mock.patch.object(ledger, "herdr_json", return_value={"agents": [], "panes": []}), mock.patch.object(ledger, "observe_unstarted") as observed:
+            self.approved_switch("markdown")
+            self.approved_switch("sqlite")
+            self.assertGreater(observed.call_count, 0)
+        with closing(sqlite3.connect(self.run / "ledger.sqlite")) as conn:
+            self.assertEqual(conn.execute("SELECT state FROM attempt").fetchone()[0], "INTERRUPTED")
+            self.assertEqual(conn.execute("SELECT sum(active) FROM claim").fetchone()[0], 0)
+
+    def test_history_requires_herdr_and_unchanged_evidence(self):
+        ledger = self.advanced()
+        before = run_backend.source_fingerprint(self.run, "sqlite")
+        with mock.patch.object(ledger, "herdr_json", side_effect=ledger.LedgerError("transport denied")):
+            assessment = run_backend.assess(self.run, "markdown")
+        self.assertIn("TRANSFER_REQUIRES_RECONCILIATION", str(assessment["blockers"]))
+        self.assertEqual(before, run_backend.source_fingerprint(self.run, "sqlite"))
+        (self.run / "PLAN.md").write_text("changed plan", encoding="utf8")
+        self.assertIn("evidence changed", str(run_backend.assess(self.run, "markdown")["blockers"]))
+
+    def test_structured_markdown_edits_require_reconciliation(self):
+        ledger = self.advanced()
+        with mock.patch.object(ledger, "herdr_json", return_value={"agents": [], "panes": []}):
+            self.approved_switch("markdown")
+        session = self.run / "SESSION.md"
+        session.write_text(session.read_text(encoding="utf8").replace("| PLANNED |", "| ACCEPTED |", 1), encoding="utf8")
+        self.assertIn("human text/checkpoint changed", str(run_backend.assess(self.run, "sqlite")["blockers"]))
+
+    def test_structured_crash_recovery_preserves_history(self):
+        ledger = self.advanced()
+        import transfer_checkpoint
+        before = transfer_checkpoint.snapshot(self.run / "ledger.sqlite")
+        with mock.patch.object(ledger, "herdr_json", return_value={"agents": [], "panes": []}):
+            assessment = run_backend.assess(self.run, "markdown")
+            approval = self.root / "crash-approval.md"
+            approval.write_text(run_backend.approval_line(assessment), encoding="utf8")
+            with self.assertRaises(Boom):
+                run_backend.switch(self.run, "markdown", approval, checkpoint=crash_at("SOURCE_RETIRED"))
+            run_backend.recover(self.run)
+            self.approved_switch("sqlite")
+        self.assertEqual(before, transfer_checkpoint.snapshot(self.run / "ledger.sqlite"))
+
+    def test_launched_history_remains_blocked_without_descendant_scope(self):
+        ledger = self.advanced(dispatched=True)
+        with closing(sqlite3.connect(self.run / "ledger.sqlite")) as conn:
+            conn.execute("UPDATE attempt SET pane='former-pane',process_pid=1234")
+            conn.commit()
+        before = run_backend.source_fingerprint(self.run, "sqlite")
+        with mock.patch.object(ledger, "herdr_json", return_value={"agents": [], "panes": []}):
+            assessment = run_backend.assess(self.run, "markdown")
+        self.assertIn("external worker descendant ownership", str(assessment["blockers"]))
+        self.assertEqual(before, run_backend.source_fingerprint(self.run, "sqlite"))
+
+    def test_machine_gate_blocks_pristine_transfer(self):
+        self.bind("markdown")
+        import verification_guard
+        with mock.patch.dict(os.environ, HERDR_LOCKS_DIR=str(self.root / "locks")):
+            verification_guard.acquire(str(self.run.resolve()), "check", os.getpid())
+            assessment = run_backend.assess(self.run, "sqlite")
+        self.assertIn("machine verification gate held", str(assessment["blockers"]))
 
     # --- round trips --------------------------------------------------------
     def test_markdown_round_trip_restores_identical_bytes(self):
@@ -223,14 +338,14 @@ class BackendTransferTests(unittest.TestCase):
         conn.close()
         result = self.cli("switch", "--to", "markdown", "--dry-run")
         self.assertEqual(result.returncode, 2)
-        self.assertIn("UNSUPPORTED_STATE: task has 1 row", result.stdout)
+        self.assertIn("TRANSFER_REQUIRES_RECONCILIATION", result.stdout)
 
         conn = sqlite3.connect(str(self.run / "ledger.sqlite"))
         conn.execute("DELETE FROM task")
         conn.execute("UPDATE run SET plan_sha = ?", ("a" * 64,))
         conn.commit()
         conn.close()
-        self.assertIn("approved plan or execution grant", self.cli("switch", "--to", "markdown", "--dry-run").stdout)
+        self.assertIn("TRANSFER_REQUIRES_RECONCILIATION", self.cli("switch", "--to", "markdown", "--dry-run").stdout)
 
     def test_legacy_sqlite_pilot_without_selector_is_refused(self):
         self.bind("sqlite")
