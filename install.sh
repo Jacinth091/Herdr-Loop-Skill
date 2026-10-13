@@ -2,6 +2,7 @@
 # Herdr Role Pack installer (POSIX shell; no Node, Python or network required).
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+VERSION=$(sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' "$ROOT/manifest.json" | head -n 1)
 AGENTS=all
 ROLES=all
 FORCE=0
@@ -90,7 +91,7 @@ install_one() {
   mkdir -p -- "$targetdir"
   temp=$(mktemp -d "$targetdir/.herdr-stage.XXXXXXXX")
   cp -R -- "$src" "$temp/$name"
-  printf 'Herdr Role Pack v2.8\n' > "$temp/$name/.herdr-role-pack-managed"
+  printf 'Herdr Role Pack v%s\n' "$VERSION" >"$temp/$name/.herdr-role-pack-managed"
   if [ -e "$targetdir/$name" ]; then
     mv -- "$targetdir/$name" "$temp/original"
   fi

@@ -73,6 +73,12 @@ def get_installed_versions() -> dict[str, dict[str, str | None]]:
     return results
 
 
+def parse_version(text: str | None) -> tuple[int, int, int] | None:
+    """'Herdr Role Pack v2.8.0' / 'v2.8.0' -> (2, 8, 0). The 2.8.0 installers wrote 'v2.8', read as 2.8.0."""
+    m = re.search(r"v(\d+)\.(\d+)(?:\.(\d+))?\b", text or "")
+    return (int(m[1]), int(m[2]), int(m[3] or 0)) if m else None
+
+
 def get_github_token() -> str | None:
     """Retrieves GitHub token from environment or active gh CLI authentication."""
     token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
@@ -405,6 +411,16 @@ def main() -> int:
 
     if not pack_asset:
         print(f"Warning: Release {tag_name} has no role-pack archive asset attached.")
+        return 0
+
+    latest_version = parse_version(tag_name)
+    managed_versions = [parse_version(v) for skills in installed.values() for v in skills.values() if v and v != "UNMANAGED"]
+    # Unreadable markers count as outdated, so an unknown install is always offered the update.
+    up_to_date = bool(managed_versions) and latest_version is not None and all(
+        v is not None and v >= latest_version for v in managed_versions
+    )
+    if up_to_date and not args.force:
+        print(f"\nUp to date: every managed skill is at {tag_name} or newer. Use --force to reinstall.")
         return 0
 
     if args.check:

@@ -119,12 +119,12 @@ class PackageAndUpdateTests(unittest.TestCase):
             patch.start()
             self.addCleanup(patch.stop)
 
-    def make_skill(self, agent, skill, body, managed=True):
+    def make_skill(self, agent, skill, body, managed=True, marker="MANAGED"):
         d = self.dirs[agent] / skill
         d.mkdir(parents=True, exist_ok=True)
         (d / "SKILL.md").write_text(body, encoding="utf-8")
         if managed:
-            (d / update.MANAGED_MARKER).write_text("MANAGED", encoding="utf-8")
+            (d / update.MANAGED_MARKER).write_text(marker, encoding="utf-8")
         return d
 
     def fake_release(self, sums=None, *, good_sums=False):
@@ -161,6 +161,45 @@ class PackageAndUpdateTests(unittest.TestCase):
     def run_update(self, *argv):
         with mock.patch.object(sys, "argv", ["update.py", *argv]):
             return update.main()
+
+    # --- version awareness ---
+
+    def test_parse_version(self):
+        self.assertEqual(update.parse_version("Herdr Role Pack v2.8.0"), (2, 8, 0))
+        self.assertEqual(update.parse_version("Herdr Role Pack v2.8"), (2, 8, 0))
+        self.assertEqual(update.parse_version("v10.2.3"), (10, 2, 3))
+        self.assertIsNone(update.parse_version("MANAGED"))
+
+    def test_update_skips_when_current_and_force_reinstalls(self):
+        self.isolate()
+        self.make_skill("codex", "herdr-manager", "v9", marker="Herdr Role Pack v9.0.0")
+        self.fake_release(good_sums=True)
+        self.assertEqual(self.run_update("--check"), 0)
+        self.assertEqual(self.run_update(), 0)
+        self.installer.assert_not_called()
+        self.assertFalse(self.backups.exists())
+
+        self.assertEqual(self.run_update("--force"), 0)
+        self.installer.assert_called_once()
+
+    def test_update_offers_newer_release_over_older_install(self):
+        self.isolate()
+        self.make_skill("codex", "herdr-manager", "v8", marker="Herdr Role Pack v8.9.9")
+        self.make_skill("codex", "herdr-worker", "v9", marker="Herdr Role Pack v9.0.0")
+        self.fake_release(good_sums=True)
+        self.assertEqual(self.run_update(), 0)
+        self.installer.assert_called_once()
+
+    @unittest.skipUnless(shutil.which("node"), "node not installed")
+    def test_node_installer_marks_manifest_version(self):
+        home = self.temp_dir / "home"
+        home.mkdir()
+        env = dict(os.environ, HOME=str(home), USERPROFILE=str(home))
+        subprocess.run(["node", str(ROOT / "bin" / "install.js"), "--agents", "claude", "--roles", "manager"],
+                       check=True, capture_output=True, env=env)
+        version = json.loads((ROOT / "manifest.json").read_text(encoding="utf-8"))["version"]
+        marker = home / ".claude" / "skills" / "herdr-manager" / update.MANAGED_MARKER
+        self.assertEqual(marker.read_text(encoding="utf-8").strip(), f"Herdr Role Pack v{version}")
 
     # --- integrity gates (AUTH-02) ---
 

@@ -15,7 +15,8 @@ python tools/update.py --check
 
 ### Understanding Version Status
 - **"Development version / no published releases found":** Indicates you are working from a development clone of the repository. No official release tag has been published yet.
-- **"Update available: vX.Y.Z":** Indicates an official, verified release tag and assets exist on GitHub.
+- **"Update available: vX.Y.Z":** A newer published release exists than at least one installed managed skill.
+- **"Up to date":** Every managed skill is already at the latest release (version read from each skill's `.herdr-role-pack-managed` marker). `python tools/update.py --force` reinstalls anyway.
 
 > [!NOTE]
 > Everyday Git commits on `main` do not represent published releases. Only annotated Git tags (`v*`) with corresponding GitHub Release assets and SHA-256 checksums represent releases.
