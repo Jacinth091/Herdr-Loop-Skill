@@ -2,7 +2,7 @@
 
 **As of October 12, 2026:** adopt SQLite as the **recommended future live coordination ledger**, but do not replace the current Markdown-based execution process yet. The v2.8 download includes a self-contained offline pilot; live operation remains on the v2.7-compatible Markdown state path until the gates below pass.
 
-**Implementation checkpoint, October 13:** Role binding can explicitly create a planning-only SQLite run with a selected-backend record. Omitted `state_backend` still selects Markdown. SQLite role activation fails closed. Backend transfer is implemented for pristine planning checkpoints only (no approved plan or grant, no tasks, claims, verification, decisions, or activation receipts), with dry-run, human approval bound to a source fingerprint, an immutable archive, a journaled two-phase cutover, and `recover`. Any other state is refused. The live tracer, complete role instructions, and a real Windows Herdr run remain cutover gates, and the default stays Markdown. The test fixture is not live-run proof.
+**PR #8 implementation checkpoint, October 13:** Explicit SQLite runs now support observed setup, epoch-bound role acknowledgment and typed authority checks through approval, grant, dispatch, report, critique, exact-candidate verification, decision, cancellation and acceptance. Both backends share a machine verification gate with owned process scopes. Structured checkpoint transfer supports approved plans/grants/tasks and released, never-started reservations, preserving typed history and evidence. External Worker descendant ownership is unavailable in current Herdr observations, so launched Worker release/transfer fails closed. A complete real Windows E2E remains a promotion gate; Markdown remains the default. Mocked or fixture results are not live proof.
 
 ## What the uploaded archive established
 
@@ -17,17 +17,17 @@ The core inefficiency is not Markdown as a document format. It is repeatedly ask
 - Fail-closed checks for replay conflicts, source revision drift, dirty candidates, evidence path traversal, wrong claimed Herdr identity, requested-versus-observed model/reasoning mismatch, and concurrent checkout writers.
 - A testable offline workflow where `SESSION.md` is **not** created. Attempting to initialize the pilot in a run already containing `SESSION.md` is refused. Installed role binder and live role skills continue using the old state path by default.
 
-The CLI does not spawn Herdr agents, receive real Signals, enforce human identity, independently authenticate Manager decisions, execute product tests, or create an OS security boundary. A pilot with supplied observation fields is not proof that the underlying process performed those actions.
+The CLI does not spawn Herdr agents, authenticate humans, independently authenticate provider delivery or create an OS security boundary. Verification commands execute only through the assigned Verifier path and shared machine gate. A pilot with supplied observation fields is not proof that the underlying process performed those actions.
 
 ## Cutover gates remaining
 
 | Gate | Requirement | Status |
 |---|---|---|
-| Source inspection | Inspect current installed agent skills, Herdr CLI/help, signal APIs and actual launch behavior on the user's Windows machine | CLI help and read-only agent metadata checked; disposable launch pending (see `docs/SQLITE_WINDOWS_GATE.md`) |
-| Live tracer | Observe Herdr spawn, `ROLE_READY`, task start, correlated report, integration, critique, verify and acceptance with bounded SQLite receipts | Not done |
-| Missing lifecycle | Implement decisions, incremental critique findings, cancellation, ambiguous recovery and human export without a second state authority | Not done |
-| Identity and permissions | Bind observed pane+process+model+worktree to attempt; never auto-elevate on Windows denial | Offline structural checks only |
-| Windows resource safety | Exercise locks, busy DB, paths, real Git worktrees and permissions on the user's machine | Mocked/fixture paths tested; real role run pending |
+| Source inspection | Inspect current installed agent skills, Herdr CLI/help, signal APIs and actual launch behavior on the user's Windows machine | CLI help and read-only metadata checked; disposable E2E requires current approval (see `docs/SQLITE_WINDOWS_GATE.md`) |
+| Live tracer | Observe Herdr spawn, `ROLE_READY`, task start, correlated report, integration, critique, verify and acceptance with bounded SQLite receipts | Real Windows proof pending |
+| Missing lifecycle | Implement decisions, incremental critique findings, cancellation, ambiguous recovery and human export without a second state authority | Real Windows proof pending |
+| Identity and permissions | Bind observed pane+process+model+worktree to attempt; never auto-elevate on Windows denial | Typed observed identity/epoch checks and mocked lifecycle; real-run proof pending |
+| Windows resource safety | Exercise locks, busy DB, paths, real Git worktrees and permissions on the user's machine | Owned Windows check processes tested locally; external Worker descendants remain unobservable |
 | Efficiency evidence | Measure input/output tokens or comparable prompt-volume proxies per accepted task, and verify no quality-gate regressions | Historical file counts only |
 | Migration | New-run opt-in after above gates; old runs remain read-only and are never silently promoted from prose | Deferred |
 
