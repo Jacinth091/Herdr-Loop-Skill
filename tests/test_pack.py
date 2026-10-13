@@ -530,8 +530,16 @@ class RolePackTests(unittest.TestCase):
         self.assertIn("references/access-triage.md", manager)
 
     def test_agy_normal_default_and_isolated_bypass_are_bounded(self):
+        readme = (ROOT / "README.md").read_text(encoding="utf8")
+        for text in (
+            "--sandbox --dangerously-skip-permissions",
+            "human-selected unattended run",
+            "disposable worktree",
+            "does not prove native approval",
+            "Stop on sandbox failure",
+        ):
+            self.assertIn(text, readme)
         for rel in (
-            "README.md",
             "skills/herdr-engineering-loop/SKILL.md",
             "skills/herdr-delegator/SKILL.md",
         ):

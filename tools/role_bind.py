@@ -440,7 +440,7 @@ def render_packet(run_id, role, agent, repo, run_dir, config):
                   "Forbidden: running tests/builds/lint/typecheck/installs, cross-worktree edits, delegation, push.",
                   "Verify effective model/effort before ROLE_READY. If not applied, BLOCKED: MODEL_OVERRIDE_NOT_APPLIED; no TASK_START."]
         if kind == "agy":
-            lines += ["Use normal restricted permissions; `--sandbox` may be requested after checking this installed CLI and platform.",
+            lines += ["Use normal permission prompts for native approval checks. For a human-selected unattended disposable worktree, launch with `--sandbox --dangerously-skip-permissions` only after confirming sandbox startup.",
                       "Never use `--dangerously-skip-permissions` as a recovery path; wait for the native decision or report the blocker."]
     else:
         lines += ["Responsibility: send ROLE_READY, await VERIFY_START + exclusive lock, then run only approved serial checks against fixed integration SHA and send VERIFY_READY.",

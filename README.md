@@ -275,7 +275,7 @@ Agents coordinate through explicit handoff envelopes sent as Herdr prompt hints:
 ### Strict Spawning Rules:
 - **No Codex Subagents:** Never use Codex's native `spawn_agent`, agent teams, or background child threads. All agents must exist in genuine Herdr panes.
 - **Cross-Model Launch Routing:** A Codex Delegator cannot launch a model-overridden Codex CLI worker directly. When this combination is needed, a **Claude Manager** performs the launch step via a `SPAWN-REQUEST.md` receipt.
-- **Agy Permissions:** Keep the installed CLI's normal permission flow. Inspect `agy --help` before using a platform-specific sandbox option; never use `--dangerously-skip-permissions` as a routine launch or recovery path. Agy's permission controls differ on Windows, so verify the actual local approval path before relying on it.
+- **Agy Permissions:** For native approval checks, keep normal permission prompts. For a human-selected unattended run in a task-specific disposable worktree, use `--sandbox --dangerously-skip-permissions` and confirm the sandbox starts successfully. This mode auto-approves tool calls and does not prove native approval. Stop on sandbox failure; never retry without the sandbox or use this mode to recover from a denial.
 
 ---
 
