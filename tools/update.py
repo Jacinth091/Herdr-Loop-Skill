@@ -283,6 +283,24 @@ def write_manifest(backup_dir: Path, manifest: dict) -> None:
     (backup_dir / "backup_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
 
+def get_valid_backups() -> list[tuple[Path, dict]]:
+    """Returns sorted list of (backup_dir, manifest) for directories containing a valid backup_manifest.json.
+    Sorted newest first by timestamp in manifest (falling back to directory mtime).
+    """
+    if not BACKUP_ROOT.exists():
+        return []
+    valid = []
+    for p in BACKUP_ROOT.iterdir():
+        if not p.is_dir():
+            continue
+        manifest = read_manifest(p)
+        if manifest and isinstance(manifest, dict) and "items" in manifest and isinstance(manifest["items"], dict):
+            ts = manifest.get("timestamp") or str(p.stat().st_mtime)
+            valid.append((p, manifest, ts))
+    valid.sort(key=lambda x: x[2], reverse=True)
+    return [(p, m) for p, m, _ in valid]
+
+
 def restore_backup(backup_dir: Path, snapshot_first: bool = False) -> None:
     """Restores a backup, removing slots the following update created.
 
@@ -293,29 +311,54 @@ def restore_backup(backup_dir: Path, snapshot_first: bool = False) -> None:
     if not backup_dir.exists():
         raise FileNotFoundError(f"Backup directory not found: {backup_dir}")
     manifest = read_manifest(backup_dir)
+    if not manifest or not isinstance(manifest, dict) or "items" not in manifest or not isinstance(manifest.get("items"), dict):
+        raise RuntimeError(
+            f"REFUSE: backup directory '{backup_dir}' is missing or has an invalid 'backup_manifest.json'."
+        )
     items, installed = manifest.get("items", {}), manifest.get("installed", {})
+
+    # Preflight: verify every original backup item exists on disk and matches hash
+    for key, item_info in items.items():
+        if not isinstance(item_info, dict) or "files" not in item_info:
+            raise RuntimeError(f"REFUSE: backup manifest item '{key}' is missing required file hash data.")
+        parts = key.split("/", 1)
+        if len(parts) != 2:
+            raise RuntimeError(f"REFUSE: invalid item key in backup manifest: '{key}'.")
+        agent, skill = parts
+        src = backup_dir / agent / skill
+        if not src.exists():
+            raise RuntimeError(
+                f"REFUSE: backup copy '{src}' for originally managed skill '{key}' is missing. Rollback aborted to prevent deleting installed skills."
+            )
+        if hash_tree(src) != item_info.get("files", {}):
+            raise RuntimeError(f"REFUSE: backup copy '{src}' does not match its manifest.")
 
     restores, removals = [], []
     for agent, base_dir in get_agent_skill_dirs().items():
         for skill in MANAGED_SKILLS:
             key = f"{agent}/{skill}"
             src, target = backup_dir / agent / skill, base_dir / skill
-            if not src.exists() and key not in installed:
-                continue
-            if target.exists():
+
+            if key in items:
+                if target.exists():
+                    if not (target / MANAGED_MARKER).exists():
+                        raise RuntimeError(
+                            f"REFUSE: destination '{target}' is unmanaged; rollback blocked to preserve user files."
+                        )
+                    if key in installed and hash_tree(target) != installed[key]:
+                        raise RuntimeError(
+                            f"REFUSE: '{target}' changed after the update; rollback blocked. Reconcile manually."
+                        )
+                restores.append((src, target))
+            elif key in installed and target.exists():
                 if not (target / MANAGED_MARKER).exists():
                     raise RuntimeError(
                         f"REFUSE: destination '{target}' is unmanaged; rollback blocked to preserve user files."
                     )
-                if key in installed and hash_tree(target) != installed[key]:
+                if hash_tree(target) != installed[key]:
                     raise RuntimeError(
                         f"REFUSE: '{target}' changed after the update; rollback blocked. Reconcile manually."
                     )
-            if src.exists():
-                if key in items and hash_tree(src) != items[key]["files"]:
-                    raise RuntimeError(f"REFUSE: backup copy '{src}' does not match its manifest.")
-                restores.append((src, target))
-            elif target.exists():
                 removals.append(target)
 
     if snapshot_first:
@@ -345,28 +388,24 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.list_backups:
-        if not BACKUP_ROOT.exists():
-            print("No local backups found.")
-            return 0
-        backups = sorted([p for p in BACKUP_ROOT.iterdir() if p.is_dir()], reverse=True)
-        if not backups:
+        valid_backups = get_valid_backups()
+        if not valid_backups:
             print("No local backups found.")
             return 0
         print("Available local backups:")
-        for b in backups:
-            print(f"  {b.name} -> {b}")
+        for b, m in valid_backups:
+            ts = m.get("timestamp", "unknown")
+            item_count = len(m.get("items", {}))
+            print(f"  {b.name} -> {b} ({item_count} items, ts: {ts})")
         return 0
 
     if args.rollback:
         if args.rollback == "latest":
-            if not BACKUP_ROOT.exists():
-                print("ERROR: No backups available to restore.", file=sys.stderr)
+            valid_backups = get_valid_backups()
+            if not valid_backups:
+                print("ERROR: No valid backups available to restore.", file=sys.stderr)
                 return 1
-            backups = sorted([p for p in BACKUP_ROOT.iterdir() if p.is_dir()], reverse=True)
-            if not backups:
-                print("ERROR: No backups available to restore.", file=sys.stderr)
-                return 1
-            target_backup = backups[0]
+            target_backup = valid_backups[0][0]
         else:
             target_backup = Path(args.rollback)
         print(f"Restoring from: {target_backup}...")
@@ -485,14 +524,24 @@ def main() -> int:
         backup_dir = backup_managed_skills()
         print(f"Saved pre-update backup: {backup_dir}")
 
-        # Run extracted node installer
+        # Run extracted node installer preserving installed agents and roles
         install_js = extract_dir / "bin" / "install.js"
         if not install_js.exists():
             raise FileNotFoundError(f"Missing installer inside archive: {install_js}")
 
-        subprocess.run([node_cmd, str(install_js), "--force", "--agents", ",".join(agents)], check=True)
-        # Record what the update installed so a later rollback can detect user edits and new slots.
         manifest = read_manifest(backup_dir)
+        agent_roles: dict[str, list[str]] = {}
+        for key in manifest.get("items", {}):
+            parts = key.split("/", 1)
+            if len(parts) == 2:
+                agent_roles.setdefault(parts[0], []).append(parts[1])
+
+        for agent, roles in sorted(agent_roles.items()):
+            subprocess.run(
+                [node_cmd, str(install_js), "--force", "--agents", agent, "--roles", ",".join(roles)],
+                check=True,
+            )
+        # Record what the update installed so a later rollback can detect user edits and new slots.
         manifest["installed"] = {key: hash_tree(path) for key, path in managed_slots().items()}
         write_manifest(backup_dir, manifest)
         print(f"Update to {tag_name} completed successfully.")

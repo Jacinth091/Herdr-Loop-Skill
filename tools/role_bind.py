@@ -212,9 +212,14 @@ def prompt_for(run_id, role, agent, run_dir, recipient=None, config=None):
                 "commit scoped code, write .herdr-loop/REPORT.md, send REPORT_READY to Delegator once. "
                 "If local packets or Herdr worker identity are absent, STOP and ask the Delegator.")
     elif role == "critic":
+        critic_check = (
+            f"Verify {model or 'Sonnet 5.5'}"
+            if kind == "claude"
+            else f"Verify configured {model or 'active'} model"
+        )
         prompt = (f"ROLE ASSIGNMENT: You are read-only Critic {name} for run {run_id}. Activate {skill}. "
                   f"Read your role packet under {run_dir} and the assigned CRITIQUE-BRIEF.md. "
-                  "Verify Sonnet 5.5, send ROLE_READY to Delegator, then WAIT for CRITIQUE_START with fixed SHA; "
+                  f"{critic_check}, send ROLE_READY to Delegator, then WAIT for CRITIQUE_START with fixed SHA; "
                   "inspect plan/diff read-only, write critiques/<review-id>.md, send CRITIQUE_READY once. "
                   "No code edits, tests, spawning, task assignment or unapproved reviews.")
     elif role == "verifier":
@@ -263,8 +268,10 @@ def prompt_for(run_id, role, agent, run_dir, recipient=None, config=None):
                    "SEND SETUP-ONLY PROMPT FIRST and require observed ROLE_READY before TASK_START; if Herdr is unavailable, report BLOCKED: HERDR_WORKER_UNAVAILABLE.")
         if kind == "codex":
             prompt += " A Codex Lead NEVER launches model-overridden Codex CLI workers: use a Claude/Agy worker or report BLOCKED: CODEX_OVERRIDE_SPAWNER_UNAVAILABLE."
-        else:
+        elif kind == "claude":
             prompt += " A Claude Lead may launch model-overridden Codex workers directly, then verify effective model/effort before TASK_START."
+        else:
+            prompt += " Non-Claude Leads (e.g. Agy/unverified) do not launch cross-model Codex overrides directly; request human operator launch or report BLOCKED: OVERRIDE_SPAWNER_RESTRICTED."
     elif role == "manager":
         if config and kind == "claude" and config["agents"]["delegator"]["kind"] == "codex":
             prompt += (" MANAGER NARROW EXCEPTION: You are the non-Codex Herdr launch operator for overridden "
@@ -305,11 +312,11 @@ def render_packet(run_id, role, agent, repo, run_dir, config):
              f"Base reference (verify immutable SHA before work): `{config.get('base_ref', '<unset>')}`",
              f"Pane (verify live): `{agent.get('pane_id', '') or '<inspect Herdr>'}`",
              f"Workspace (verify live): `{agent.get('workspace_id', '') or '<inspect Herdr>'}`",
-             f"Signal recipient (exact Herdr agent name): `{recipient}`",
+             f"Signal recipient: `{recipient}` (direct human console)" if role == "lead" else f"Signal recipient (exact Herdr agent name): `{recipient}`",
              f"Effective preferred model (confirm runtime): `{agent.get('_resolved_model') or '<existing agent default>'}`",
              f"Required reasoning effort (confirm runtime): `{agent.get('_resolved_effort') or '<agent default>'}`",
              f"Spawn owner (for a model-overridden Codex Worker): `{spawn_owner(role, agent, config)}`",
-             "Transport: `herdr agent prompt <recipient> <envelope>`; a submitted prompt is not an observed receipt.",
+             "Transport: `human-direct` (console presentation; do not send `herdr agent prompt` to the human)." if role == "lead" else "Transport: `herdr agent prompt <recipient> <envelope>`; a submitted prompt is not an observed receipt.",
              "Activation: verify agent + pane + cwd and signal route; send `ROLE_READY` once.", ""]
     if role == "manager":
         lines += ["Responsibility: architecture, scope, plan approval, decisions and final acceptance.",
@@ -333,7 +340,8 @@ def render_packet(run_id, role, agent, repo, run_dir, config):
                   "Parallel budget approved in config: " + str(config.get("parallel_workers_authorized", False)),
                   "Send setup-only worker prompt, verify READY.md + observed ROLE_READY, then issue TASK_START. Prefer a separate Critic for risky changes, since you review your own integration."]
     elif role == "critic":
-        lines += ["Responsibility: Sonnet 5.5 independent read-only critique of accepted plan/integration at an explicit SHA.",
+        critic_desc = agent.get("_resolved_model") or ("Sonnet 5.5" if kind == "claude" else "Configured independent")
+        lines += [f"Responsibility: {critic_desc} independent read-only critique of accepted plan/integration at an explicit SHA.",
                   "Send ROLE_READY, wait for CRITIQUE_START, then write critiques/<review-id>.md and send CRITIQUE_READY.",
                   "Forbidden: product edits, tests, cherry-picks, worker spawning, independent task assignment or acceptance."]
     elif role == "worker":
@@ -354,7 +362,7 @@ def render_packet(run_id, role, agent, repo, run_dir, config):
     lines += ["", "## User-visible language (not routing)", "",
               "Keep task_id and attempt_id in Markdown brief/report/signal keys for reconciliation; present the slice title, expected result and evidence-based status to the human. Never use an ID-only progress message. Do not invent a title if it is missing; Delegator must take it from the accepted Manager PLAN before dispatch.",
               "", "## Mandatory signal handshake and access safety", "",
-              f"Recipient: `{recipient}`. Transport: named Herdr `agent prompt`; local Markdown/Git is authoritative.",
+              f"Recipient: `{recipient}`. Transport: `human-direct` (direct console presentation); local Markdown/Git is authoritative." if role == "lead" else f"Recipient: `{recipient}`. Transport: named Herdr `agent prompt`; local Markdown/Git is authoritative.",
               "If a prompt is denied/missing or local .herdr-loop is unwritable, stop and report the specific blocker; NEVER auto-elevate, disable sandbox, alter OS ACLs or spawn Codex subagents.",
               "Worker must not edit product code until Delegator observes READY.md + ROLE_READY and sends TASK_START. Verifier needs VERIFY_START plus exclusive verification lock. Critic needs CRITIQUE_START.",
               "", "## Activation prompt", "", prompt_for(run_id, role, agent, run_dir, recipient, config), "",
@@ -497,7 +505,7 @@ def main(argv=None):
             activation["agents"].append({"name": agent["name"], "kind": agent["kind"], "role": role,
                 "task_id": agent.get("task_id", ""), "attempt_id": agent.get("_attempt_id", ""), "worktree": agent.get("worktree", ""),
                 "task_title": agent.get("_task_title", ""), "task_outcome": agent.get("_task_outcome", ""),
-                "signal_recipient": recipient, "signal_transport": "herdr-agent-prompt",
+                "signal_recipient": recipient, "signal_transport": "human-direct" if role == "lead" else "herdr-agent-prompt",
                 "model": agent.get("_resolved_model", ""), "reasoning_effort": agent.get("_resolved_effort", ""),
                 "spawn_owner": spawn_owner(role, agent, config),
                 "requires_role_ready": True,
