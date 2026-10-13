@@ -95,4 +95,4 @@ Include: plan revision and task IDs; source/integrated SHA table; scope deviatio
 
 ## Optional SQLite investigation (not a live replacement)
 
-For an explicit **offline** evaluation of deterministic bookkeeping, consult [SQLite pilot safety and ownership](references/sqlite-ledger-pilot.md). `SESSION.md` remains the sole mutable coordination ledger for every existing and normal new Herdr run. Do not switch source of truth mid-run, or claim that the pilot processes Herdr signals/launches. Do not ask workers to create duplicate Markdown for the benefit of the pilot.
+For an explicit **offline** evaluation of deterministic bookkeeping, consult [SQLite pilot safety and ownership](references/sqlite-ledger-pilot.md). `SESSION.md` remains the default mutable ledger; an explicitly selected SQLite run follows the controller's SQLite role procedure. Do not switch source of truth mid-run, or claim that the pilot processes Herdr signals/launches. Do not ask workers to create duplicate Markdown for the benefit of the pilot.

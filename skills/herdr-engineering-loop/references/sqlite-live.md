@@ -1,20 +1,59 @@
-# SQLite role procedure (candidate runs)
+# SQLite role procedure (explicit opt-in)
 
-Use this procedure only when the role packet names `sqlite`, `backend.active.json` selects SQLite, and its epoch matches the packet. Run the `herdr_ledger.py` path printed in the packet with `--run-dir <run>`; use command `--help` for required flags. Stop on an integrity error or changed epoch. `ledger.sqlite` is the only mutable run ledger. Keep plans, briefs, reports, decisions, critique and verification evidence as Markdown artifacts and pass their paths to typed commands. The Delegator (or Lead in its Delegator role) records orchestration transitions. Workers write only in assigned worktrees.
+Use this procedure when the role packet selects `sqlite` and its epoch matches `backend.active.json`. `ledger.sqlite` is the only mutable run ledger. Keep substantive plans, briefs, reports and decision evidence in referenced files. Use the installed `scripts/herdr_ledger.py` path printed in the packet. Markdown remains the new-run default pending real Windows E2E proof.
 
-1. **Planning:** Manager writes `PLAN.md` and a decision artifact; Lead presents the plan to the human. Delegator observes the approver and records `plan-approve`. Obtain a separate human execution-grant artifact, then record `run-authorize` with its path, human actor and distinct recorder. `status` must report `EXECUTING` before `task-add` or worker allocation. A changed plan or grant blocks execution.
-2. **Dispatch:** Use `next` and `task-show` for scoped reads. Record approved slices with `task-add` including title, outcome, dependencies and brief. Reserve a clean independent checkout with `attempt-reserve`; launch the named Herdr agent and record `attempt-attach` only after actual agent, pane, process and checkout observation. Require worker-local `READY.md` and observed recipient `ROLE_READY` before `attempt-ready`. Send a distinct `TASK_START`, observe its receipt, then record `attempt-start`.
-3. **Integration:** Inspect the worker's commit and report plus observed `REPORT_READY`; record `attempt-report`. Integrate into the run-owned checkout, verify source and integrated patch identity, then call `candidate-freeze` at the exact clean HEAD.
-4. **Review and checks:** Require an observed Critic `CRITIQUE_READY` and durable report before `critique-record` and `finding-record`. At the frozen candidate, `verify-start` acquires claims. The approved Verifier or Delegator runs the authorized command through `verify-exec`; capture the result and artifact. Interrupted checks use `verify-reconcile` only after process liveness is resolved. PASS belongs to the exact candidate and cannot be asserted through `verify-record`.
-5. **Decision and recovery:** Record a Manager decision with `decision-record` and hashed rationale. `task-accept` checks reported source, signal receipts, candidate, critique and passing verification. It does not push, merge, deploy or give final human acceptance. Use `status --human` for progress, `recover` for diagnosis, and `run-cancel`/`cancel-finalize` only after human cancellation and observed quiescence.
+## Setup and role acknowledgment
 
-CLI assertions do not authenticate a human or prove an agent's model. Verify the actual Herdr pane, recipient, actor and model before recording a transition. Normal SQLite activation remains gated until a disposable Windows run demonstrates this procedure.
+`tools/activate_roles.py --run-dir <run> --roles <roles>` observes named agent pane, process and checkout before sending setup. It records intent and submission in SQLite events. Submission is not readiness; uncertain delivery blocks replay. It never launches an agent or grants execution.
 
-## Backend transfer (planning checkpoint only)
+The submitted prompt includes `ROLE_ACK operation=<id> prompt_sha=<hash> run=<run> epoch=<epoch>`. The assigned role writes a readiness artifact containing these exact lines, with its observed name/pane and assigned role:
 
-1. `run_backend.py --run-dir <run> switch --to <backend> --dry-run`: read-only; prints the source fingerprint and blockers. Writes nothing.
-2. A human writes an approval file containing the exact `Backend transfer approval:` line from the dry-run. Agents must not author it.
-3. `run_backend.py --run-dir <run> switch --to <backend> --approval-ref <file>`: archives the source, validates the staged target, retires the source, activates the target, then commits the selector at epoch+1.
-4. If interrupted, `run_backend.py --run-dir <run> recover` rolls back before source retirement or finishes forward after it. A leftover `backend.lock` needs `--clear-stale-lock`, and only after confirming no transfer process is running.
+```text
+run=<run>
+epoch=<epoch>
+agent=<name>
+pane=<pane>
+role=<role>
+operation=<id>
+prompt_sha=<hash>
+```
 
-While a transfer is unfinished, every ledger command refuses with `BACKEND_TRANSFER_IN_PROGRESS`.
+After actually observing directed ROLE_READY, the assigned recipient records this receipt:
+
+```text
+ROLE_READY <run> <id> <name> <pane> <recipient>
+evidence_sha=<SHA-256 of readiness file bytes>
+```
+
+Record it with `--run-dir <run> --as-agent <name> --epoch <epoch> role-confirm --operation-id <id> --pane <pane> --recipient <recipient> --recipient-pane <recipient-pane> --evidence <ready-file> --receipt <receipt-file>`. Lead's recipient is `human`; omit recipient-pane only for the human-direct receipt. The recorder must actually observe receipt, not manufacture it from prompt success. Confirmation re-observes process identity and requested model/effort. Restarted processes require a new acknowledgment.
+
+For subsequent mutations, supply global `--as-agent <assigned-name> --epoch <current-epoch>` before the command. The caller must be in its acknowledged Herdr pane. Current prompt/evidence hashes and process identity are checked again. Historical offline pilots without a selector retain their explicit offline API; they are never silently promoted.
+
+## Typed lifecycle
+
+1. **Plan:** Manager records `plan-approve` with approved plan and rationale. Lead records human plan approval in its Manager role. This leaves the run `PLANNING`. Delegator/Lead separately records `run-authorize` with actual human grant evidence, human actor and distinct recorder. Neither command invents consent. The run must be `EXECUTING` before task allocation.
+2. **Dispatch:** Delegator/Lead uses `task-add`, `next`, `task-show`, then `attempt-reserve` for the assigned checkout and Worker. After authorized Herdr launch, `attempt-attach` observes identity. Worker-local READY and directed ROLE_READY evidence precede `attempt-ready`; a separate observed TASK_START acknowledgment precedes `attempt-start`. Worker edits remain prohibited until TASK_START.
+3. **Integration:** Delegator/Lead records observed REPORT_READY with `attempt-report`, integrates the source, and calls `candidate-freeze` at a clean exact HEAD/tree with matching patch provenance. Writer release requires observed shutdown; preserve claims on inconclusive observation.
+4. **Review and checks:** The assigned Critic records `critique-record` and findings after authorized critique start and observed report. Delegator/Lead allocates `verify-start` to a separately assigned Verifier. Only the Verifier runs approved commands with `verify-exec`. PASS requires captured exit result, unchanged candidate and empty owned process scope. `verify-record` cannot assert PASS. Timeout, surviving descendants or unknown scope cannot become successful verification.
+5. **Decision:** Manager/Lead records `decision-record` with immutable rationale. Delegator/Lead uses `task-accept`, validating source report, signals, critique, candidate, passing verification and Manager decision. Task acceptance is not final human acceptance, push, merge or deployment.
+6. **Cancel/recover:** Human-authorized `run-cancel` fences dispatch. `cancel-finalize` refuses outstanding ownership. `recover` is read-only and never auto-respawns. `verify-reconcile` requires observed stopped process ownership; absent parent PID alone is insufficient.
+
+CLI assertions and local receipt files do not authenticate humans or provider-side delivery. Record only decisions and receipts actually observed. Mocked tests do not satisfy the live Windows gate.
+
+## Shared heavy-verification gate
+
+Both backends use `scripts/verification_guard.py` and the same machine lock under `~/.herdr-locks` (or one shared `HERDR_LOCKS_DIR`). SQLite uses it automatically through `verify-start`/`verify-exec`. For Markdown, freeze the checkout and wrap each already-approved heavy command:
+
+```text
+python <controller>/scripts/verification_guard.py --run-dir <run> --verification <id> --checkout <integration-checkout> --timeout 300 -- <approved-command>
+```
+
+Record tested SHA and captured result in SESSION.md. A changed checkout makes the result indeterminate. Windows checks enter a Job Object before execution; Linux checks enter a process group. Surviving children retain the gate. If a Windows owner crashes and its named job is inaccessible, reconciliation stays blocked. No stale gate is automatically cleared.
+
+## Backend transfer
+
+Run `run_backend.py --run-dir <run> switch --to <backend> --dry-run` first. A human-authored approval file must contain its exact `Backend transfer approval:` line; agents must not fabricate it. The real `switch --approval-ref <file>` archives source, validates staged destination and advances the selector epoch. Rebind role packets and obtain fresh acknowledgments before continuing.
+
+Beyond pristine planning, supported checkpoints include validated structured plans/grants/tasks and released reservations whose named agent never started. Herdr topology must be reachable, ownership inactive, signals confirmed, and evidence unchanged. SQLite history becomes a versioned section inside the single active SESSION.md. Human text must match that section exactly before switching back. Free-form legacy edits require explicit normalization.
+
+Launched external Worker history remains `TRANSFER_REQUIRES_RECONCILIATION`: current Herdr observations do not retain descendant ownership. Transfer never stops agents or closes panes. `recover` rolls back before source retirement or completes the verified target after retirement; unfinished transfer blocks ledger access. Clear a leftover backend lock only after observing its process stopped.

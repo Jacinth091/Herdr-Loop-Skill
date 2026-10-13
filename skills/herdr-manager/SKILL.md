@@ -7,7 +7,7 @@ description: Act as the explicitly assigned Manager or architect in a Herdr engi
 
 Own **what should be built and why**, not agent topology or implementation mechanics. Model choice does not grant this role: read the current role packet/roster and stop if assigned otherwise. If `.herdr-loop/<run-id>/role-packets/<your-agent-name>.md` exists, read it first; otherwise obtain the human's explicit role assignment. If you were assigned **Lead**, `herdr-lead` governs how this role combines with the Delegator role: messages "to the Delegator" become your own artifacts, and the human approves the plan and gives final acceptance.
 
-When the role packet selects SQLite, follow [SQLite role procedure](../herdr-engineering-loop/references/sqlite-live.md) for plan and decision evidence. Delegator records typed state; `SESSION.md` references below apply to Markdown runs.
+When the role packet selects SQLite, follow [SQLite role procedure](../herdr-engineering-loop/references/sqlite-live.md) for plan and decision evidence. Manager records typed plan and candidate decisions; Delegator records execution transitions. `SESSION.md` references below apply to Markdown runs.
 
 ## Directed signaling
 

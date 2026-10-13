@@ -1,6 +1,6 @@
 ---
 name: herdr-engineering-loop
-description: Bootstrap, coordinate, inspect, and recover human-directed multi-agent engineering workflows inside Herdr. Use for session setup, workspace provisioning, role packet binding (Manager, Delegator, Worker, Verifier, Critic), Markdown live state or a planning-only SQLite candidate, serial verification locks, model launch routing, and fail-closed crash recovery.
+description: Bootstrap, coordinate, inspect, and recover human-directed multi-agent engineering workflows inside Herdr. Use for session setup, workspace provisioning, role packet binding (Manager, Delegator, Worker, Verifier, Critic), Markdown state or an explicit SQLite run, serial verification locks, model launch routing, and fail-closed crash recovery.
 ---
 
 # Herdr Engineering Loop: Session Controller Guide
@@ -63,24 +63,24 @@ git status --short
 
 ---
 
-## 4. State Backends: Markdown Authority vs. Offline SQLite Pilot
+## 4. State Backends: Markdown Default and Explicit SQLite
 
-Herdr Role Pack v2.8 maintains single live authority while providing an isolated offline pilot engine:
+Each run has one selected authority; new runs default to Markdown until the Windows promotion gate passes:
 
 ### Active Runtime Authority: Markdown Ledger (`state_backend: "markdown"`, Active Authority)
 - **Primary Document:** `<repo>/.herdr-loop/<run-id>/SESSION.md`.
 - **Ownership:** Maintained directly by `herdr-delegator` (or `herdr-lead` in lead mode).
 - **Use Case:** Transparent, human-editable, zero-tool dependency live runs where Markdown and Git history are authoritative.
-- **Verification Lock:** Serial heavy verification lock is an advisory coordination invariant tracked in `SESSION.md`.
+- **Verification Lock:** Wrap approved heavy commands with `scripts/verification_guard.py`, shared with SQLite; record exact tested SHA and result in `SESSION.md`.
 - **Constraint:** Do not initialize `ledger.sqlite` in a Markdown-backed live run.
 
-### Planning-only SQLite candidate (`scripts/herdr_ledger.py`)
+### Explicit SQLite run (`scripts/herdr_ledger.py`)
 - **Primary Database:** `<repo>/.herdr-loop/<run-id>/ledger.sqlite`.
 - **Ownership:** Deterministic CLI commands via `scripts/herdr_ledger.py`.
 - **Reference Contract:** Follow [SQLite Ledger Pilot](references/sqlite-ledger-pilot.md) for typed transitions, atomic claim fences, and receipt requirements.
-- **Use Case:** Isolated offline CLI evaluation, token-efficient benchmarking, and automated state transition validation.
-- **Verification Lock:** The CLI uses a per-run claim and an exclusive machine lock during offline checks.
-- **Constraint:** Explicit SQLite binding creates a `PLANNING` ledger; `tools/activate_roles.py` rejects live activation (`SQLITE_BACKEND_NOT_LIVE`). Backend transfer is available only for pristine planning checkpoints (`run_backend.py switch --dry-run` first; human approval file required). Keep Markdown as the live default until the Windows lifecycle gate passes.
+- **Use Case:** Explicit typed orchestration and offline evaluation; live Windows proof remains a default-promotion gate.
+- **Verification Lock:** The CLI uses per-run claims and the shared machine gate with observed process ownership.
+- **Constraint:** Explicit SQLite binding creates a `PLANNING` ledger. Activation records observed setup, with separate correlated acknowledgment before typed role transitions. Transfer accepts validated quiescent checkpoints; unobservable descendants remain blocked. Keep Markdown as the default until the exact-commit Windows lifecycle gate passes.
 - **Candidate procedure:** Read [SQLite role procedure](references/sqlite-live.md) when inspecting an explicitly selected SQLite run.
 
 ---
@@ -141,9 +141,9 @@ Always verify actual model and reasoning effort via `herdr agent get <name>` bef
 
 ---
 
-## 7. SQLite Transactional Ledger Execution Sequence (Offline Pilot)
+## 7. SQLite Transactional Ledger Execution Sequence (Explicit Opt-in)
 
-When testing transitions offline using the pilot CLI `scripts/herdr_ledger.py`:
+For a selected governed run, use [SQLite role procedure](references/sqlite-live.md) with current role/epoch flags. The sequence below also illustrates the explicit offline pilot API using `scripts/herdr_ledger.py`:
 
 ```mermaid
 sequenceDiagram
