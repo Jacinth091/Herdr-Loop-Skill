@@ -99,5 +99,6 @@ sh ./install.sh --dry-run
 ## 4. Versioning Policy
 
 - **Single Canonical Version:** The package version is declared in [manifest.json](../manifest.json) and mirrored in [package.json](../package.json).
-- **Conventional Commits:** Ordinary Git commits should use conventional commit subjects (e.g. `feat: ...`, `fix: ...`, `docs: ...`). **Do not create pseudo-version bumps for routine commits.**
+- **Commit Message Format:** Every commit subject is `type[module]: message`, where `type` is the kind of change (`feat`, `fix`, `docs`, `test`, `ci`, `chore`, `refactor`) and `module` is the area touched (e.g. `update`, `installer`, `ledger`, `release`, `delegator`). Examples: `fix[update]: compare installed version with latest release`, `docs[readme]: correct pane setup`. **Do not create pseudo-version bumps for routine commits.**
+- **Protected `main`:** Changes reach `main` only through a pull request with both CI checks (`Test & Validate (ubuntu-latest)` and `(windows-latest)`) passing; force-pushes and deletion are blocked. Only repository admins can create, move or delete `v*` release tags.
 - **Releases are Explicit:** Published releases are created only via annotated Git tags (`vX.Y.Z`) on reviewed commits. See [RELEASING.md](RELEASING.md) for full instructions.
