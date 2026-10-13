@@ -1,0 +1,3 @@
+interface:
+  display_name: "herdr lead"
+  short_description: "Herdr session role: lead (manager + delegator)"

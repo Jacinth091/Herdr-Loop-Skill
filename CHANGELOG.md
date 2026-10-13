@@ -7,13 +7,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
-### Fixed
-- Installers write the real pack version (from `manifest.json`) into each managed skill's marker instead of a hardcoded `v2.8`.
-- `tools/update.py` compares installed versions with the latest release: reports "Up to date" and does nothing unless `--force` is given.
-
 ### Planned
 - Native Herdr Signals and Relay transport evaluation once upstream becomes available.
 - Extended token billing metrics comparison between Markdown and SQLite state backends.
+
+---
+
+## [2.8.1] - 2026-10-13
+
+### Added
+- **Lead role (`herdr-lead`):** a budget option where one agent holds both the Manager and Delegator duties. Bind it with `agents.lead` in `roles.json` (see `examples/roles.lead.json`); `role_bind.py` rejects mixing it with `manager`/`delegator` and still forbids any other doubled-up role. The Lead never implements or acts as Worker, Verifier or Critic; the human approves the plan before any worker starts and gives final acceptance. Installing the `lead` role also installs `herdr-manager` and `herdr-delegator`, which it builds on.
+
+### Fixed
+- Installers write the real pack version (from `manifest.json`) into each managed skill's marker instead of a hardcoded `v2.8`.
+- `tools/update.py` compares installed versions with the latest release: reports "Up to date" and does nothing unless `--force` is given.
 
 ---
 

@@ -7,7 +7,7 @@ description: Bootstrap, coordinate, inspect, and recover human-directed multi-ag
 
 The `herdr-engineering-loop` skill defines the responsibilities and operational rules for the **Session Controller** (human operator or session bootstrap agent).
 
-The Session Controller provisions the Herdr environment, binds individual agents to strictly bounded roles, manages state transitions, and orchestrates crash recovery. **This skill does not replace the dedicated role skills:** once an agent is assigned a role (`herdr-manager`, `herdr-delegator`, `herdr-worker`, `herdr-verifier`, or `herdr-critic`), that agent must follow only its specific role contract.
+The Session Controller provisions the Herdr environment, binds individual agents to strictly bounded roles, manages state transitions, and orchestrates crash recovery. **This skill does not replace the dedicated role skills:** once an agent is assigned a role (`herdr-manager`, `herdr-delegator`, `herdr-lead`, `herdr-worker`, `herdr-verifier`, or `herdr-critic`), that agent must follow only its specific role contract. `herdr-lead` is the human-approved budget option where one agent holds both the Manager and Delegator duties (`agents.lead` in `roles.json`); it never implements, and the human approves the plan and gives final acceptance.
 
 ---
 

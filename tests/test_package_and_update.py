@@ -55,8 +55,9 @@ class PackageAndUpdateTests(unittest.TestCase):
         res = subprocess.run(cmd, capture_output=True, text=True)
         self.assertEqual(res.returncode, 0)
 
-        role_pack_zip = out_dir / "herdr-role-pack-v2.8.0.zip"
-        controller_zip = out_dir / "herdr-controller-v2.8.0.zip"
+        version = json.loads((ROOT / "manifest.json").read_text(encoding="utf-8"))["version"]
+        role_pack_zip = out_dir / f"herdr-role-pack-v{version}.zip"
+        controller_zip = out_dir / f"herdr-controller-v{version}.zip"
         sums_file = out_dir / "SHA256SUMS"
 
         self.assertTrue(role_pack_zip.exists())
@@ -64,8 +65,8 @@ class PackageAndUpdateTests(unittest.TestCase):
         self.assertTrue(sums_file.exists())
 
         sums_content = sums_file.read_text(encoding="utf-8")
-        self.assertIn("herdr-role-pack-v2.8.0.zip", sums_content)
-        self.assertIn("herdr-controller-v2.8.0.zip", sums_content)
+        self.assertIn(role_pack_zip.name, sums_content)
+        self.assertIn(controller_zip.name, sums_content)
 
         # Inspect archive contents: MUST include LICENSE and required files
         with zipfile.ZipFile(role_pack_zip, "r") as zf:
@@ -81,6 +82,7 @@ class PackageAndUpdateTests(unittest.TestCase):
             self.assertIn("skills/herdr-engineering-loop/SKILL.md", names)
             self.assertIn("skills/herdr-manager/SKILL.md", names)
             self.assertIn("skills/herdr-delegator/SKILL.md", names)
+            self.assertIn("skills/herdr-lead/SKILL.md", names)
             self.assertIn("skills/herdr-worker/SKILL.md", names)
             self.assertIn("skills/herdr-verifier/SKILL.md", names)
             self.assertIn("skills/herdr-critic/SKILL.md", names)

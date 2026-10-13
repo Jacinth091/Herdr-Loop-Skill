@@ -5,7 +5,7 @@ description: Act as the explicitly assigned Manager or architect in a Herdr engi
 
 # Herdr Manager: the brain
 
-Own **what should be built and why**, not agent topology or implementation mechanics. Model choice does not grant this role: read the current role packet/roster and stop if assigned otherwise. If `.herdr-loop/<run-id>/role-packets/<your-agent-name>.md` exists, read it first; otherwise obtain the human's explicit role assignment.
+Own **what should be built and why**, not agent topology or implementation mechanics. Model choice does not grant this role: read the current role packet/roster and stop if assigned otherwise. If `.herdr-loop/<run-id>/role-packets/<your-agent-name>.md` exists, read it first; otherwise obtain the human's explicit role assignment. If you were assigned **Lead**, `herdr-lead` governs how this role combines with the Delegator role: messages "to the Delegator" become your own artifacts, and the human approves the plan and gives final acceptance.
 
 ## Directed signaling
 

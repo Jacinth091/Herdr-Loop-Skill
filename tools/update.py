@@ -36,6 +36,7 @@ MANAGED_SKILLS = [
     "herdr-engineering-loop",
     "herdr-manager",
     "herdr-delegator",
+    "herdr-lead",
     "herdr-worker",
     "herdr-verifier",
     "herdr-critic",

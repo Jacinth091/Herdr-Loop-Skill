@@ -27,6 +27,8 @@ const SKILL_NAMES = {
   'herdr-manager': 'herdr-manager',
   delegator: 'herdr-delegator',
   'herdr-delegator': 'herdr-delegator',
+  lead: 'herdr-lead',
+  'herdr-lead': 'herdr-lead',
   worker: 'herdr-worker',
   'herdr-worker': 'herdr-worker',
   verifier: 'herdr-verifier',
@@ -39,10 +41,13 @@ const ALL_ROLES = [
   'herdr-engineering-loop',
   'herdr-manager',
   'herdr-delegator',
+  'herdr-lead',
   'herdr-worker',
   'herdr-verifier',
   'herdr-critic',
 ];
+// The Lead role is built on the Manager and Delegator contracts, so it always brings them along.
+const LEAD_NEEDS = ['herdr-manager', 'herdr-delegator'];
 
 function printHelp() {
   console.log(`
@@ -54,7 +59,8 @@ Usage:
 
 Options:
   --agents <list>    Comma-separated agents to install for: claude, codex, agy, or all (default: all)
-  --roles <list>     Comma-separated roles: manager, delegator, worker, verifier, critic, controller, or all (default: all)
+  --roles <list>     Comma-separated roles: manager, delegator, lead, worker, verifier, critic, controller, or all (default: all)
+                     'lead' (one agent as Manager + Delegator) also installs manager and delegator
   --force            Update already installed role-pack skills; refuse foreign folders
   --dry-run          Show actions without writing any files
   --uninstall        Remove only pack-managed skills
@@ -137,10 +143,12 @@ function resolveRoles(selection) {
   for (const r of requested) {
     const canonical = SKILL_NAMES[r];
     if (!canonical) {
-      console.error(`Error: Unknown role '${r}'. Supported: manager, delegator, worker, verifier, critic, controller, all`);
+      console.error(`Error: Unknown role '${r}'. Supported: manager, delegator, lead, worker, verifier, critic, controller, all`);
       process.exit(2);
     }
-    if (!resolved.includes(canonical)) resolved.push(canonical);
+    for (const skill of canonical === 'herdr-lead' ? [canonical, ...LEAD_NEEDS] : [canonical]) {
+      if (!resolved.includes(skill)) resolved.push(skill);
+    }
   }
   return resolved;
 }

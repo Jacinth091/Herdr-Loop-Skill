@@ -11,13 +11,13 @@ import shutil
 import subprocess
 import sys
 
-ALLOWED = {"manager", "delegator", "worker", "verifier", "critic"}
+ALLOWED = {"manager", "delegator", "lead", "worker", "verifier", "critic"}
 
 
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--run-dir", type=Path, required=True, help="Directory holding ACTIVATION.json")
-    p.add_argument("--roles", default="manager,delegator", help="Comma-separated roles to activate, or all")
+    p.add_argument("--roles", default="manager,delegator,lead", help="Comma-separated roles to activate, or all (default: the run leaders)")
     p.add_argument("--dry-run", action="store_true", help="Print prompts without invoking Herdr")
     args = p.parse_args(argv)
     try:
@@ -27,7 +27,7 @@ def main(argv=None):
             raise ValueError("Activation manifest was not created by Herdr Role Pack")
         requested = ALLOWED if args.roles == "all" else set(args.roles.split(","))
         if not requested or not requested <= ALLOWED:
-            raise ValueError("--roles must contain only manager,delegator,worker,verifier,critic or all")
+            raise ValueError("--roles must contain only manager,delegator,lead,worker,verifier,critic or all")
         targets = [a for a in manifest["agents"] if a["role"] in requested]
         if not targets:
             raise ValueError("No agents match the requested roles")
