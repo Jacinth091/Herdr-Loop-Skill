@@ -13,10 +13,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
-## [2.8.0] - Unreleased
+## [2.8.0] - 2026-10-13
 
-> Not yet published: no `v2.8.0` tag or GitHub Release exists. Versions 2.4.0-2.7.0 below are internal
-> milestones that were never tagged or released.
+> First published release. Versions 2.4.0-2.7.0 below are internal milestones that were never tagged or released.
 
 ### Added
 - **Skill-First Documentation:** Rebuilt `README.md` as a user-focused practical manual detailing team roles, safety requirements, and worked session walkthroughs.
