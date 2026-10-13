@@ -291,8 +291,14 @@ def main(argv=None):
 
         for entry, receipt in dispatch:
             if backend == "sqlite":
-                entry["_ack_envelope"] = (f"ROLE_ACK operation={receipt['operation_id']} prompt_sha={receipt['prompt_sha256']} "
-                                          f"run={manifest['run_id']} epoch={manifest['backend_epoch']}")
+                recipient = "human" if entry["role"] == "lead" else entry["signal_recipient"]
+                entry["_ack_envelope"] = "\n".join((
+                    f"ROLE_ACK operation={receipt['operation_id']} prompt_sha={receipt['prompt_sha256']} "
+                    f"run={manifest['run_id']} epoch={manifest['backend_epoch']}",
+                    "For SQLite SETUP, send the following exact acknowledgment line to the assigned recipient "
+                    "after writing current readiness evidence; task/attempt ROLE_READY is a separate handshake:",
+                    f"ROLE_READY {manifest['run_id']} {receipt['operation_id']} {entry['name']} "
+                    f"{entry['_observed']['pane']} {recipient}"))
             store_receipt(receipt)
             try:
                 result = _run_prompt(herdr, entry)

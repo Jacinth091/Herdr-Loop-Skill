@@ -196,6 +196,13 @@ class LiveSQLiteTests(unittest.TestCase):
             self.assertEqual(activation.main(['--run-dir', str(self.run_dir), '--roles', 'manager']), 0)
             self.assertEqual(activation.main(['--run-dir', str(self.run_dir), '--roles', 'manager']), 2)
             self.assertEqual(prompts.call_count, 1)
+        entry = prompts.call_args.args[1]
+        receipt = activation.herdr_ledger.activation_receipts(self.run_dir)[0]
+        with mock.patch.object(activation.subprocess, 'run', return_value=fake) as transport:
+            activation._run_prompt('herdr', entry)
+        sent_prompt = transport.call_args.args[0][-1]
+        self.assertIn(f"ROLE_READY run {receipt['operation_id']} manager w3:p1 delegator", sent_prompt)
+        self.assertIn('task/attempt ROLE_READY is a separate handshake', sent_prompt)
         self.assertFalse((self.run_dir / 'SESSION.md').exists())
         self.assertEqual(activation.herdr_ledger.activation_receipts(self.run_dir)[0]['status'], 'OUTCOME_UNCERTAIN')
 
