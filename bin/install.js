@@ -65,6 +65,8 @@ Options:
   --dry-run          Show actions without writing any files
   --uninstall        Remove only pack-managed skills
   --with-herdr       Also install official 'herdr' skill using local 'herdr --skill'
+  --target-dir <dir> Install into this skills folder instead of the known agent folders
+                     (for any other AI CLI that loads SKILL.md folders; see INSTALL-FOR-AI.md)
   -h, --help         Show this help message
 
 Target Folders:
@@ -82,6 +84,7 @@ function parseArgs(args) {
     dryRun: false,
     uninstall: false,
     withHerdr: false,
+    targetDir: null,
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -101,6 +104,8 @@ function parseArgs(args) {
       options.agents = args[++i];
     } else if (arg === '--roles' && i + 1 < args.length) {
       options.roles = args[++i];
+    } else if (arg === '--target-dir' && i + 1 < args.length) {
+      options.targetDir = args[++i];
     } else {
       console.error(`Unknown option: ${arg}`);
       printHelp();
@@ -235,8 +240,13 @@ function installSkill({ source, baseDir, skillName, options }) {
 
 function main() {
   const options = parseArgs(process.argv.slice(2));
-  const agentDirs = getAgentDirs();
-  const selectedAgents = resolveAgents(options.agents, agentDirs);
+  if (options.targetDir && options.agents !== 'all') {
+    console.error('Error: use either --agents or --target-dir, not both');
+    process.exit(2);
+  }
+  // --target-dir: one custom skills folder for any other AI CLI, handled like a known agent.
+  const agentDirs = options.targetDir ? { custom: path.resolve(options.targetDir) } : getAgentDirs();
+  const selectedAgents = options.targetDir ? ['custom'] : resolveAgents(options.agents, agentDirs);
   const selectedRoles = resolveRoles(options.roles);
 
   // Preflight check: validate sources and check for unmanaged destination collisions

@@ -88,6 +88,18 @@ The skill operates entirely through local Markdown packets, Git commits, and sta
 
 The installer places the skills into your user-level agent configuration folders (`~/.claude/skills`, `~/.agents/skills`, `~/.gemini/antigravity-cli/skills`).
 
+### Let Your AI Install It
+
+Paste this into the AI coding CLI you want to use (Claude Code, Codex, Agy or any other CLI that loads `SKILL.md` skills):
+
+```text
+Install Herdr Loop Skill for yourself by following
+https://github.com/Jacinth091/Herdr-Loop-Skill/blob/main/INSTALL-FOR-AI.md
+Show me the dry-run and ask me before installing.
+```
+
+[`INSTALL-FOR-AI.md`](INSTALL-FOR-AI.md) tells the agent how to find its own skills folder, preview, install, verify and report back, including a fallback without Node.js and one for tools without a skills feature.
+
 ### One Command (no clone needed)
 
 ```bash
