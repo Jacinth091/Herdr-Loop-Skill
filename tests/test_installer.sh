@@ -16,6 +16,11 @@ for dir in "$HOME/.claude/skills" "$HOME/.agents/skills" "$HOME/.gemini/antigrav
 done
 sh "$ROOT/install.sh" --agents claude,codex,agy --roles manager,worker,critic > "$TMP/second.txt"
 grep -q 'SKIP already installed' "$TMP/second.txt"
+# The lead role brings the Manager and Delegator contracts it is built on.
+sh "$ROOT/install.sh" --agents claude --roles lead > "$TMP/lead.txt"
+test -f "$HOME/.claude/skills/herdr-lead/SKILL.md"
+test -f "$HOME/.claude/skills/herdr-delegator/SKILL.md"
+test -f "$HOME/.claude/skills/herdr-manager/SKILL.md"
 # Refuse to overwrite a third-party folder, including with --force.
 mkdir -p "$HOME/.agents/skills/herdr-verifier"
 echo 'preserve' > "$HOME/.agents/skills/herdr-verifier/foreign.txt"

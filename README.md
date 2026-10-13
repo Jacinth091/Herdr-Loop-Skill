@@ -61,6 +61,7 @@ The skill operates entirely through local Markdown packets, Git commits, and sta
 | :--- | :--- | :--- | :--- |
 | **Manager** | `herdr-manager` | Architectural lead; approves `PLAN.md`, defines human-facing task titles, renders final acceptance verdicts. | Never writes implementation code, dispatches workers, or runs tests. |
 | **Delegator** | `herdr-delegator` | Dispatcher & integrator; provisions worktrees, briefs workers, reviews commits, integrates code, manages serial test lock. | Never invents architectural requirements or bypasses test gates. |
+| **Lead** | `herdr-lead` | Budget option: one agent does both the Manager and Delegator jobs (plan, dispatch, integrate, verify). Builds on `herdr-manager` + `herdr-delegator`. | Never implements or acts as Worker/Verifier/Critic. You approve the plan before any worker starts and give final acceptance. |
 | **Worker** | `herdr-worker` | Task implementer; implements exactly one slice in an isolated Git worktree; writes source code and `REPORT.md`. | **Strictly forbidden** from running tests, builds, linters, typechecks, or package installs. |
 | **Verifier** | `herdr-verifier` | Independent tester; runs approved sequential checks against the frozen integration SHA under a run-wide lock. | **Strictly forbidden** from editing application or test source files. |
 | **Critic** | `herdr-critic` | Read-only reviewer; inspects plan briefs and candidate Git diffs against architectural intent; reports findings. | Read-only. Never tests, runs code, or edits files. |
@@ -87,10 +88,22 @@ The skill operates entirely through local Markdown packets, Git commits, and sta
 
 The installer places the skills into your user-level agent configuration folders (`~/.claude/skills`, `~/.agents/skills`, `~/.gemini/antigravity-cli/skills`).
 
+### Let Your AI Install It
+
+Paste this into the AI coding CLI you want to use (Claude Code, Codex, Agy or any other CLI that loads `SKILL.md` skills):
+
+```text
+Install Herdr Loop Skill for yourself by following
+https://github.com/Jacinth091/Herdr-Loop-Skill/blob/main/INSTALL-FOR-AI.md
+Show me the dry-run and ask me before installing.
+```
+
+[`INSTALL-FOR-AI.md`](INSTALL-FOR-AI.md) tells the agent how to find its own skills folder, preview, install, verify and report back, including a fallback without Node.js and one for tools without a skills feature.
+
 ### One Command (no clone needed)
 
 ```bash
-npx github:Jacinth091/Herdr-Loop-Skill#v2.8.0
+npx github:Jacinth091/Herdr-Loop-Skill#v2.8.1
 ```
 
 That's it: `npx` fetches the pack from GitHub and runs the installer. It backs up anything it replaces, rolls back if a copy fails part-way, and never touches skill folders it didn't install.
@@ -101,25 +114,26 @@ That's it: `npx` fetches the pack from GitHub and runs the installer. It backs u
 
 | I want to... | Command |
 |---|---|
-| Install everything (all roles, all agents) | `npx github:Jacinth091/Herdr-Loop-Skill#v2.8.0` |
-| See what it would do first, changing nothing | `npx github:Jacinth091/Herdr-Loop-Skill#v2.8.0 --dry-run` |
-| Update an existing install to this release | `npx github:Jacinth091/Herdr-Loop-Skill#v2.8.0 --force` |
+| Install everything (all roles, all agents) | `npx github:Jacinth091/Herdr-Loop-Skill#v2.8.1` |
+| See what it would do first, changing nothing | `npx github:Jacinth091/Herdr-Loop-Skill#v2.8.1 --dry-run` |
+| Update an existing install to this release | `npx github:Jacinth091/Herdr-Loop-Skill#v2.8.1 --force` |
 | Try the latest unreleased `main` | `npx github:Jacinth091/Herdr-Loop-Skill --force` |
-| Install for Claude Code only | `npx github:Jacinth091/Herdr-Loop-Skill#v2.8.0 --agents claude` |
-| Install for Claude Code and Codex only | `npx github:Jacinth091/Herdr-Loop-Skill#v2.8.0 --agents claude,codex` |
-| Claude as Manager + Critic | `npx github:Jacinth091/Herdr-Loop-Skill#v2.8.0 --agents claude --roles controller,manager,critic` |
-| Codex as Delegator | `npx github:Jacinth091/Herdr-Loop-Skill#v2.8.0 --agents codex --roles controller,delegator` |
-| Agy as a Worker only | `npx github:Jacinth091/Herdr-Loop-Skill#v2.8.0 --agents agy --roles controller,worker` |
-| Claude Haiku as Verifier | `npx github:Jacinth091/Herdr-Loop-Skill#v2.8.0 --agents claude --roles controller,verifier` |
-| Also install the official `herdr` skill (from `herdr --skill`) | `npx github:Jacinth091/Herdr-Loop-Skill#v2.8.0 --with-herdr` |
+| Install for Claude Code only | `npx github:Jacinth091/Herdr-Loop-Skill#v2.8.1 --agents claude` |
+| Install for Claude Code and Codex only | `npx github:Jacinth091/Herdr-Loop-Skill#v2.8.1 --agents claude,codex` |
+| Claude as Manager + Critic | `npx github:Jacinth091/Herdr-Loop-Skill#v2.8.1 --agents claude --roles controller,manager,critic` |
+| Codex as Delegator | `npx github:Jacinth091/Herdr-Loop-Skill#v2.8.1 --agents codex --roles controller,delegator` |
+| One agent as Manager + Delegator (Lead), to save cost | `npx github:Jacinth091/Herdr-Loop-Skill#v2.8.1 --agents claude --roles controller,lead` |
+| Agy as a Worker only | `npx github:Jacinth091/Herdr-Loop-Skill#v2.8.1 --agents agy --roles controller,worker` |
+| Claude Haiku as Verifier | `npx github:Jacinth091/Herdr-Loop-Skill#v2.8.1 --agents claude --roles controller,verifier` |
+| Also install the official `herdr` skill (from `herdr --skill`) | `npx github:Jacinth091/Herdr-Loop-Skill#v2.8.1 --with-herdr` |
 | Remove everything the pack installed | `npx github:Jacinth091/Herdr-Loop-Skill --uninstall` |
 | Remove it from one agent only | `npx github:Jacinth091/Herdr-Loop-Skill --uninstall --agents agy` |
 | See all options | `npx github:Jacinth091/Herdr-Loop-Skill --help` |
 
 - **Agents:** `claude`, `codex`, `agy`, or `all` (the default).
-- **Roles:** `controller` (the `herdr-engineering-loop` session skill), `manager`, `delegator`, `worker`, `verifier`, `critic`, or `all` (the default). Keep `controller` in any role subset: it is the skill that sets up and coordinates the run.
+- **Roles:** `controller` (the `herdr-engineering-loop` session skill), `manager`, `delegator`, `lead` (also installs `manager` and `delegator`, which it builds on), `worker`, `verifier`, `critic`, or `all` (the default). Keep `controller` in any role subset: it is the skill that sets up and coordinates the run.
 - **Flags combine freely**, e.g. `--agents claude --roles controller,manager --dry-run`.
-- **Pinning:** `#v2.8.0` installs exactly that published release. Leave it off to get whatever is on `main` right now. Replace it with a newer tag (see [Releases](https://github.com/Jacinth091/Herdr-Loop-Skill/releases)) to upgrade.
+- **Pinning:** `#v2.8.1` installs exactly that published release. Leave it off to get whatever is on `main` right now. Replace it with a newer tag (see [Releases](https://github.com/Jacinth091/Herdr-Loop-Skill/releases)) to upgrade.
 - **Already installed?** Without `--force`, existing pack skills are skipped. A folder with the same name that the pack did not install is never overwritten; the installer stops and tells you which one.
 
 ### From a Local Clone (Node.js / npx)
@@ -194,6 +208,8 @@ Create a run configuration file `roles.json`:
   }
 }
 ```
+
+**Low on credits? Use Lead mode.** Replace the `manager` and `delegator` entries with a single `"lead": { "name": "lead", "kind": "claude" }`. That one agent plans, dispatches, integrates and verifies, but never implements: it shows you `PLAN.md` and waits for your GO before any worker starts, and its verdict is a recommendation that you accept. A complete example is in [`examples/roles.lead.json`](examples/roles.lead.json).
 
 ### Step 3: Bind Role Packets
 Generate isolated role instructions for the default Markdown engine:
@@ -315,7 +331,8 @@ npx . --uninstall
 
 | Capability | Current Status | Notes |
 | :--- | :--- | :--- |
-| **Six-Role Multi-Agent Workflow** | **Stable / Supported** | Manager, Delegator, Worker, Verifier, Critic, Controller. |
+| **Role-Based Multi-Agent Workflow** | **Stable / Supported** | Manager, Delegator, Worker, Verifier, Critic, Controller. |
+| **Lead Mode (Manager + Delegator in one agent)** | **New in 2.8.1** | `agents.lead` in `roles.json` (see `examples/roles.lead.json`); human approves the plan and gives final acceptance. |
 | **Standard Markdown Ledger (`SESSION.md`)** | **Stable / Default** | Human-readable, transparent, zero-dependency. Active runtime authority. |
 | **Transactional SQLite Ledger** | **Offline Pilot Only** | Offline CLI pilot for evaluation only; not live-bindable (`role_bind.py` explicitly refuses `state_backend: "sqlite"`). |
 | **Zero-Dependency Installers** | **Supported** | `npx .`, PowerShell (`install.ps1`), and POSIX shell (`install.sh`). |

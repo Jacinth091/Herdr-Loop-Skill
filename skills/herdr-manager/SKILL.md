@@ -5,7 +5,7 @@ description: Act as the explicitly assigned Manager or architect in a Herdr engi
 
 # Herdr Manager: the brain
 
-Own **what should be built and why**, not agent topology or implementation mechanics. Model choice does not grant this role: read the current role packet/roster and stop if assigned otherwise. If `.herdr-loop/<run-id>/role-packets/<your-agent-name>.md` exists, read it first; otherwise obtain the human's explicit role assignment.
+Own **what should be built and why**, not agent topology or implementation mechanics. Model choice does not grant this role: read the current role packet/roster and stop if assigned otherwise. If `.herdr-loop/<run-id>/role-packets/<your-agent-name>.md` exists, read it first; otherwise obtain the human's explicit role assignment. If you were assigned **Lead**, `herdr-lead` governs how this role combines with the Delegator role: messages "to the Delegator" become your own artifacts, and the human approves the plan and gives final acceptance.
 
 ## Directed signaling
 
@@ -55,7 +55,7 @@ When the Codex Delegator sends `SPAWN_REQUEST <run> <task> <request-path>`, insp
 
 Use an optional separate Claude Haiku 5.5 `herdr-verifier` as the **dedicated tester** for approved serial verification, or let the Delegator handle trivial checks. This is the Verifier role, not a Worker, and it must hold the exclusive lock before tests. The Manager sets acceptance requirements but does not run tests.
 
-Use the optional independent `herdr-critic` role (Claude Sonnet 5.5) for bounded read-only challenge of plan or integration. The Critic reports `CRITIQUE_READY` to the Delegator, who routes findings to you for a decision. Critic findings do not themselves grant approval.
+Use the optional independent `herdr-critic` role (Claude Sonnet 5.5 by default) for bounded read-only challenge of plan or integration. The Critic reports `CRITIQUE_READY` to the Delegator, who routes findings to you for a decision. Critic findings do not themselves grant approval.
 
 ## Required outputs
 

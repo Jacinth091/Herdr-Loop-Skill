@@ -11,7 +11,7 @@
 [CmdletBinding()]
 param(
   [ValidateSet('All','Claude','Codex','Agy')][string[]]$Agents = @('All'),
-  [ValidateSet('All','Controller','Manager','Delegator','Worker','Verifier','Critic')][string[]]$Roles = @('All'),
+  [ValidateSet('All','Controller','Manager','Delegator','Lead','Worker','Verifier','Critic')][string[]]$Roles = @('All'),
   [switch]$Force,
   [switch]$DryRun,
   [switch]$Uninstall,
@@ -25,11 +25,14 @@ $skillNames = @{
   Controller = 'herdr-engineering-loop'
   Manager = 'herdr-manager'
   Delegator = 'herdr-delegator'
+  Lead = 'herdr-lead'
   Worker = 'herdr-worker'
   Verifier = 'herdr-verifier'
   Critic = 'herdr-critic'
 }
-$roleNames = if ($Roles -contains 'All') { @('Controller','Manager','Delegator','Worker','Verifier','Critic') } else { @($Roles | Select-Object -Unique) }
+$roleNames = if ($Roles -contains 'All') { @('Controller','Manager','Delegator','Lead','Worker','Verifier','Critic') } else { @($Roles | Select-Object -Unique) }
+# The Lead role is built on the Manager and Delegator contracts, so it always brings them along.
+if ($roleNames -contains 'Lead') { $roleNames = @(@($roleNames) + @('Manager','Delegator') | Select-Object -Unique) }
 $agentNames = if ($Agents -contains 'All') { @('Claude','Codex','Agy') } else { @($Agents | Select-Object -Unique) }
 $agentDirs = @{
   Claude = Join-Path $HOME '.claude\skills'

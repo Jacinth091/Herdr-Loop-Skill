@@ -5,7 +5,7 @@ description: Act as the explicitly assigned Delegator and Integrator in a Herdr 
 
 # Herdr Delegator: the hands and traffic controller
 
-Own execution topology, task allocation, Git integration, evidence, and RAM. Model identity never grants authority. Read the live role packet, accepted `PLAN.md` revision and `SESSION.md`; if assigned a different role, switch skills rather than imitating Delegator work.
+Own execution topology, task allocation, Git integration, evidence, and RAM. Model identity never grants authority. Read the live role packet, accepted `PLAN.md` revision and `SESSION.md`; if assigned a different role, switch skills rather than imitating Delegator work. If you were assigned **Lead**, `herdr-lead` governs how this role combines with the Manager role: handoffs "to the Manager" become your own artifacts, and decisions and final acceptance go to the human.
 
 ## Run integrity and delegation boundaries
 
@@ -51,7 +51,7 @@ Read [Model Routing](references/model-routing.md) for the exclusive cross-provid
 
 A Claude Haiku 5.5 agent can be assigned as an implementation Worker **or** as a dedicated Verifier, but it must have one explicit role at a time. Haiku as Worker never runs tests; Haiku as Verifier runs only approved checks. The Critic does not test.
 
-An optional **Claude Sonnet 5.5 Critic** is a distinct read-only Herdr agent and `herdr-critic` role, never a Codex or Claude internal subagent. Launch it in a dedicated available pane with model `claude-sonnet-5-5`; verify a `ROLE_READY` acknowledgment, send `CRITIQUE_START` with `CRITIQUE-BRIEF.md` following [Critique Format](references/critique-format.md) and exact plan/head SHA, then collect durable `CRITIQUE_READY` evidence. Forward significant findings to the Manager; critique alone is not an acceptance verdict and consumes no heavy test slot. Never use a Critic as a spare spawn operator.
+An optional **Critic** (Claude Sonnet 5.5 by default) is a distinct read-only Herdr agent and `herdr-critic` role, never a Codex or Claude internal subagent. Launch it in a dedicated available pane with model `claude-sonnet-5-5`; verify a `ROLE_READY` acknowledgment, send `CRITIQUE_START` with `CRITIQUE-BRIEF.md` following [Critique Format](references/critique-format.md) and exact plan/head SHA, then collect durable `CRITIQUE_READY` evidence. Forward significant findings to the Manager; critique alone is not an acceptance verdict and consumes no heavy test slot. Never use a Critic as a spare spawn operator.
 
 ## Narrow non-code exception and trust gate
 

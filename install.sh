@@ -9,12 +9,12 @@ FORCE=0
 DRY_RUN=0
 UNINSTALL=0
 WITH_HERDR=0
-SKILLS="herdr-engineering-loop herdr-manager herdr-delegator herdr-worker herdr-verifier herdr-critic"
+SKILLS="herdr-engineering-loop herdr-manager herdr-delegator herdr-lead herdr-worker herdr-verifier herdr-critic"
 
 usage() {
   cat <<'USAGE'
 Install independent Herdr roles into user-level agent skill folders.
-Usage: sh install.sh [--agents claude,codex,agy|all] [--roles manager,delegator,worker,verifier,critic,controller|all] [--force] [--dry-run] [--uninstall] [--with-herdr]
+Usage: sh install.sh [--agents claude,codex,agy|all] [--roles manager,delegator,lead,worker,verifier,critic,controller|all] [--force] [--dry-run] [--uninstall] [--with-herdr]
   --agents      Agent CLIs receiving skills (default: all)
   --roles       Role skills to install (default: all)
   --force       Update already pack-managed skills; refuse foreign folders
@@ -48,12 +48,16 @@ expand_roles() {
       controller|engineering-loop|herdr-engineering-loop) name=herdr-engineering-loop ;;
       manager|herdr-manager) name=herdr-manager ;;
       delegator|herdr-delegator) name=herdr-delegator ;;
+      # Lead is built on the Manager and Delegator contracts, so it always brings them along.
+      lead|herdr-lead) name='herdr-lead herdr-manager herdr-delegator' ;;
       worker|herdr-worker) name=herdr-worker ;;
       verifier|herdr-verifier) name=herdr-verifier ;;
       critic|herdr-critic) name=herdr-critic ;;
       *) echo "Unknown role: $role" >&2; exit 2 ;;
     esac
-    case " $out " in *" $name "*) ;; *) out="$out $name" ;; esac
+    for n in $name; do
+      case " $out " in *" $n "*) ;; *) out="$out $n" ;; esac
+    done
   done
   printf '%s\n' "$out"
 }

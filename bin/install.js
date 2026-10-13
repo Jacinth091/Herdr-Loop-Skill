@@ -27,6 +27,8 @@ const SKILL_NAMES = {
   'herdr-manager': 'herdr-manager',
   delegator: 'herdr-delegator',
   'herdr-delegator': 'herdr-delegator',
+  lead: 'herdr-lead',
+  'herdr-lead': 'herdr-lead',
   worker: 'herdr-worker',
   'herdr-worker': 'herdr-worker',
   verifier: 'herdr-verifier',
@@ -39,10 +41,13 @@ const ALL_ROLES = [
   'herdr-engineering-loop',
   'herdr-manager',
   'herdr-delegator',
+  'herdr-lead',
   'herdr-worker',
   'herdr-verifier',
   'herdr-critic',
 ];
+// The Lead role is built on the Manager and Delegator contracts, so it always brings them along.
+const LEAD_NEEDS = ['herdr-manager', 'herdr-delegator'];
 
 function printHelp() {
   console.log(`
@@ -54,11 +59,14 @@ Usage:
 
 Options:
   --agents <list>    Comma-separated agents to install for: claude, codex, agy, or all (default: all)
-  --roles <list>     Comma-separated roles: manager, delegator, worker, verifier, critic, controller, or all (default: all)
+  --roles <list>     Comma-separated roles: manager, delegator, lead, worker, verifier, critic, controller, or all (default: all)
+                     'lead' (one agent as Manager + Delegator) also installs manager and delegator
   --force            Update already installed role-pack skills; refuse foreign folders
   --dry-run          Show actions without writing any files
   --uninstall        Remove only pack-managed skills
   --with-herdr       Also install official 'herdr' skill using local 'herdr --skill'
+  --target-dir <dir> Install into this skills folder instead of the known agent folders
+                     (for any other AI CLI that loads SKILL.md folders; see INSTALL-FOR-AI.md)
   -h, --help         Show this help message
 
 Target Folders:
@@ -76,6 +84,7 @@ function parseArgs(args) {
     dryRun: false,
     uninstall: false,
     withHerdr: false,
+    targetDir: null,
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -95,6 +104,8 @@ function parseArgs(args) {
       options.agents = args[++i];
     } else if (arg === '--roles' && i + 1 < args.length) {
       options.roles = args[++i];
+    } else if (arg === '--target-dir' && i + 1 < args.length) {
+      options.targetDir = args[++i];
     } else {
       console.error(`Unknown option: ${arg}`);
       printHelp();
@@ -137,10 +148,12 @@ function resolveRoles(selection) {
   for (const r of requested) {
     const canonical = SKILL_NAMES[r];
     if (!canonical) {
-      console.error(`Error: Unknown role '${r}'. Supported: manager, delegator, worker, verifier, critic, controller, all`);
+      console.error(`Error: Unknown role '${r}'. Supported: manager, delegator, lead, worker, verifier, critic, controller, all`);
       process.exit(2);
     }
-    if (!resolved.includes(canonical)) resolved.push(canonical);
+    for (const skill of canonical === 'herdr-lead' ? [canonical, ...LEAD_NEEDS] : [canonical]) {
+      if (!resolved.includes(skill)) resolved.push(skill);
+    }
   }
   return resolved;
 }
@@ -227,8 +240,13 @@ function installSkill({ source, baseDir, skillName, options }) {
 
 function main() {
   const options = parseArgs(process.argv.slice(2));
-  const agentDirs = getAgentDirs();
-  const selectedAgents = resolveAgents(options.agents, agentDirs);
+  if (options.targetDir && options.agents !== 'all') {
+    console.error('Error: use either --agents or --target-dir, not both');
+    process.exit(2);
+  }
+  // --target-dir: one custom skills folder for any other AI CLI, handled like a known agent.
+  const agentDirs = options.targetDir ? { custom: path.resolve(options.targetDir) } : getAgentDirs();
+  const selectedAgents = options.targetDir ? ['custom'] : resolveAgents(options.agents, agentDirs);
   const selectedRoles = resolveRoles(options.roles);
 
   // Preflight check: validate sources and check for unmanaged destination collisions

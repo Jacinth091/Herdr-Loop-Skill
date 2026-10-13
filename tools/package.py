@@ -25,6 +25,7 @@ MANDATORY_ROOT_FILES = [
     "manifest.json",
     "package.json",
     "README.md",
+    "INSTALL-FOR-AI.md",
     "CHANGELOG.md",
     "install.ps1",
     "install.sh",

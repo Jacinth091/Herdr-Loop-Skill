@@ -1,6 +1,6 @@
 ---
 name: herdr-worker
-description: Implement a narrowly scoped task as an explicitly assigned Agy, Codex Luna, or Claude Haiku 5.5 Worker in its own Herdr pane and Git worktree (or an expressly approved non-code isolated-copy workspace). Use on receipt of a Herdr worker role packet and `.herdr-loop/TASK.md`; implement only that task, commit scoped code, write `.herdr-loop/REPORT.md`, and notify the Delegator. Never run tests, lint, builds, typechecks or package installs, manage other agents, or make architectural changes.
+description: Implement a narrowly scoped task as an explicitly assigned Worker (by default Agy, Codex Luna or Claude Haiku 5.5; any CLI the human assigns can serve) in its own Herdr pane and Git worktree (or an expressly approved non-code isolated-copy workspace). Use on receipt of a Herdr worker role packet and `.herdr-loop/TASK.md`; implement only that task, commit scoped code, write `.herdr-loop/REPORT.md`, and notify the Delegator. Never run tests, lint, builds, typechecks or package installs, manage other agents, or make architectural changes.
 ---
 
 # Herdr Worker: focused implementation

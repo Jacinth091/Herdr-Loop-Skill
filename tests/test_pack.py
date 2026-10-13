@@ -67,7 +67,7 @@ class RolePackTests(unittest.TestCase):
         self.assertIn("Invalid state_backend", result.stderr)
 
     def test_bundle_roles_exist(self):
-        for skill in ("herdr-engineering-loop", "herdr-manager", "herdr-delegator", "herdr-worker", "herdr-verifier", "herdr-critic"):
+        for skill in ("herdr-engineering-loop", "herdr-manager", "herdr-delegator", "herdr-lead", "herdr-worker", "herdr-verifier", "herdr-critic"):
             skillfile = ROOT / "skills" / skill / "SKILL.md"
             self.assertTrue(skillfile.is_file(), skillfile)
             self.assertIn("name: " + skill, skillfile.read_text(encoding="utf8"))
@@ -122,7 +122,7 @@ class RolePackTests(unittest.TestCase):
 
     def test_manifest_disallows_codex_subagents(self):
         manifest = json.loads((ROOT / "manifest.json").read_text(encoding="utf8"))
-        self.assertEqual(manifest["version"], "2.8.0")
+        self.assertEqual(manifest["version"], "2.8.1")
         self.assertEqual(manifest["policy"]["claude_verifier_model_default"], "claude-haiku-5-5")
         self.assertFalse(manifest["policy"]["codex_native_subagents_allowed"])
         self.assertTrue(manifest["policy"]["workers_must_be_herdr_spawned"])
@@ -155,9 +155,30 @@ class RolePackTests(unittest.TestCase):
         self.save()
         self.assertNotEqual(self.bind().returncode, 0)
         self.config["run_id"] = "okay"
-        self.config["agents"]["workers"][0]["kind"] = "python-runner"
+        self.config["agents"]["workers"][0]["kind"] = "../runner"
         self.save()
         self.assertNotEqual(self.bind().returncode, 0)
+
+    def test_unknown_agent_kind_binds_with_warning(self):
+        self.config["agents"]["workers"][0]["kind"] = "gemini"
+        self.save()
+        result = self.bind()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("WARNING Agent worker_t01 uses unverified kind 'gemini'", result.stderr)
+        run_dir = self.repo / ".herdr-loop" / "feature-example"
+        self.assertIn("## Warnings", (run_dir / "ROSTER.md").read_text(encoding="utf8"))
+        worker = next(a for a in json.loads((run_dir / "ACTIVATION.json").read_text(encoding="utf8"))["agents"] if a["role"] == "worker")
+        self.assertIn("Activate the herdr-worker skill (load its SKILL.md)", worker["prompt"])
+        self.assertIn("NO tests", worker["prompt"])
+        self.assertNotIn("CODEX HARD RULE", worker["prompt"])
+        self.assertEqual(worker["model"], "")
+
+    def test_known_kinds_keep_their_role_rules(self):
+        self.config["agents"]["manager"]["kind"] = "agy"
+        self.save()
+        result = self.bind()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("not supported for role manager", result.stderr)
 
     def test_parallel_budget_requires_explicit_authorization(self):
         for count in (2, 3):
@@ -331,7 +352,7 @@ class RolePackTests(unittest.TestCase):
         self.assertIn("observed ROLE_READY", delegator["prompt"])
 
     def test_every_role_skill_teaches_directed_signaling(self):
-        for role in ("herdr-engineering-loop", "herdr-manager", "herdr-delegator", "herdr-worker", "herdr-verifier", "herdr-critic"):
+        for role in ("herdr-engineering-loop", "herdr-manager", "herdr-delegator", "herdr-lead", "herdr-worker", "herdr-verifier", "herdr-critic"):
             with self.subTest(role=role):
                 path = ROOT / "skills" / role
                 self.assertTrue((path / "references" / "signals.md").exists())
@@ -467,9 +488,21 @@ class RolePackTests(unittest.TestCase):
         self.assertNotEqual(failure.returncode, 0)
         self.assertIn("reasoning_effort", failure.stderr)
         self.config["agents"]["workers"][0]["reasoning_effort"] = "xhigh"
-        self.config["agents"]["critic"]["kind"] = "codex"
         self.save()
-        self.assertNotEqual(self.bind().returncode, 0)
+        self.assertEqual(self.bind().returncode, 0)
+
+    def test_critic_model_is_a_recommendation(self):
+        self.config["agents"]["critic"]["model"] = "claude-opus-5-5"
+        self.save()
+        result = self.bind("--force")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("claude-sonnet-5-5 is the recommended Claude critic model", result.stderr)
+        self.config["agents"]["critic"] = {"name": "critic_t01", "kind": "codex"}
+        self.save()
+        result = self.bind("--force")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        critic = next(a for a in json.loads((self.repo / ".herdr-loop" / "feature-example" / "ACTIVATION.json").read_text(encoding="utf8"))["agents"] if a["role"] == "critic")
+        self.assertEqual(critic["model"], "")
 
     def test_critic_can_be_optional_without_breaking_legacy_configs(self):
         self.config["agents"].pop("critic")
@@ -582,7 +615,7 @@ class RolePackTests(unittest.TestCase):
         self.assertIn("Duplicate worker attempt", res.stderr)
 
     def test_cancel_signal_and_independent_verification_contracts(self):
-        for role in ("herdr-engineering-loop", "herdr-manager", "herdr-delegator", "herdr-worker", "herdr-verifier", "herdr-critic"):
+        for role in ("herdr-engineering-loop", "herdr-manager", "herdr-delegator", "herdr-lead", "herdr-worker", "herdr-verifier", "herdr-critic"):
             with self.subTest(role=role):
                 body = (ROOT / "skills" / role / "SKILL.md").read_text(encoding="utf8")
                 self.assertIn("cancel", body.lower())
@@ -607,8 +640,102 @@ class RolePackTests(unittest.TestCase):
                 self.assertIn("one active writing attempt", reference)
                 self.assertLess(len(reference.splitlines()), 100)
         manifest = json.loads((ROOT / "manifest.json").read_text(encoding="utf8"))
-        self.assertEqual(manifest["version"], "2.8.0")
+        self.assertEqual(manifest["version"], "2.8.1")
         self.assertTrue(manifest["policy"]["relay_runtime_not_required"])
+
+    # --- Lead mode: one agent holds Manager + Delegator duties ---
+
+    def use_lead_config(self):
+        self.config = json.loads((ROOT / "examples" / "roles.lead.json").read_text(encoding="utf8"))
+        self.save()
+        return self.repo / ".herdr-loop" / self.config["run_id"]
+
+    def test_lead_roster_binds_one_agent_for_both_leaders(self):
+        run_dir = self.use_lead_config()
+        result = self.bind()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        agents = json.loads((run_dir / "ACTIVATION.json").read_text(encoding="utf8"))["agents"]
+        self.assertEqual([(a["role"], a["name"]) for a in agents], [("lead", "lead"), ("worker", "worker_t01")])
+        lead, worker = agents
+        self.assertIn("/herdr-lead", lead["prompt"])
+        self.assertIn("wait for the human's GO", lead["prompt"])
+        self.assertIn("NEVER implement product code", lead["prompt"])
+        self.assertIn("the human gives final acceptance", lead["prompt"])
+        self.assertIn("herdr agent start", lead["prompt"])
+        self.assertEqual(lead["signal_recipient"], "the human (not a Herdr agent)")
+        self.assertEqual(worker["signal_recipient"], "lead")
+        self.assertEqual(worker["spawn_owner"], "lead")
+        self.assertIn("Signal roles: Lead lead -> human", (run_dir / "ROSTER.md").read_text(encoding="utf8"))
+        session = (run_dir / "SESSION.md").read_text(encoding="utf8")
+        self.assertIn("Lead: inspect Herdr", session)
+        self.assertNotIn("Manager: inspect", session)
+        packet = (run_dir / "role-packets" / "lead.md").read_text(encoding="utf8")
+        self.assertIn("Forbidden: implementing product code, acting as Worker/Verifier/Critic", packet)
+
+    def test_lead_cannot_be_mixed_with_manager_or_delegator(self):
+        self.use_lead_config()
+        self.config["agents"]["manager"] = {"name": "architect", "kind": "claude"}
+        self.save()
+        result = self.bind()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("not both", result.stderr)
+
+    def test_lead_still_cannot_double_up_other_roles(self):
+        self.use_lead_config()
+        self.config["agents"]["workers"][0]["name"] = "lead"
+        self.save()
+        result = self.bind()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Agent assigned more than one role: lead", result.stderr)
+
+    def test_lead_kind_must_be_a_leader_cli(self):
+        self.use_lead_config()
+        self.config["agents"]["lead"]["kind"] = "agy"
+        self.save()
+        result = self.bind()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("not supported for role lead", result.stderr)
+
+    def test_codex_lead_never_launches_overridden_codex_worker(self):
+        run_dir = self.use_lead_config()
+        self.config["agents"]["lead"]["kind"] = "codex"
+        worker = self.config["agents"]["workers"][0]
+        worker["kind"] = "codex"
+        worker.pop("model")
+        self.save()
+        self.assertEqual(self.bind().returncode, 0)
+        agents = {a["role"]: a for a in json.loads((run_dir / "ACTIVATION.json").read_text(encoding="utf8"))["agents"]}
+        self.assertEqual(agents["worker"]["spawn_owner"], "human")
+        self.assertIn("$herdr-lead", agents["lead"]["prompt"])
+        self.assertIn("CODEX_OVERRIDE_SPAWNER_UNAVAILABLE", agents["lead"]["prompt"])
+        self.assertIn("NEVER use `spawn_agent`", agents["lead"]["prompt"])
+
+    def test_claude_lead_launches_overridden_codex_worker(self):
+        run_dir = self.use_lead_config()
+        worker = self.config["agents"]["workers"][0]
+        worker["kind"] = "codex"
+        worker.pop("model")
+        self.save()
+        self.assertEqual(self.bind().returncode, 0)
+        agents = {a["role"]: a for a in json.loads((run_dir / "ACTIVATION.json").read_text(encoding="utf8"))["agents"]}
+        self.assertEqual(agents["worker"]["spawn_owner"], "lead")
+        self.assertEqual(agents["worker"]["model"], "gpt-6-luna")
+
+    def test_activation_defaults_include_the_lead(self):
+        self.use_lead_config()
+        self.assertEqual(self.bind().returncode, 0)
+        result = self.activate("--dry-run")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("DRY RUN lead (lead, claude)", result.stdout)
+        self.assertNotIn("worker_t01", result.stdout)
+
+    def test_lead_skill_stays_in_its_lane(self):
+        text = (ROOT / "skills" / "herdr-lead" / "SKILL.md").read_text(encoding="utf8")
+        for required in ("herdr-manager", "herdr-delegator", "Never implement", "Never act as a Worker, Verifier or Critic",
+                         "Plan gate", "Acceptance gate", "final acceptance", "CODEX_OVERRIDE_SPAWNER_UNAVAILABLE"):
+            self.assertIn(required, text)
+        for role in ("herdr-manager", "herdr-delegator"):
+            self.assertIn("`herdr-lead` governs", (ROOT / "skills" / role / "SKILL.md").read_text(encoding="utf8"))
 
 
 if __name__ == "__main__":
