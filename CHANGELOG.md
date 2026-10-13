@@ -7,6 +7,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Added
+- **Backend transfer for planning checkpoints:** `run_backend.py switch --to <markdown|sqlite>` moves a pristine planning run between backends. It requires `--dry-run` first, a human approval file that quotes the source fingerprint, an immutable archive, and a journaled two-phase cutover. `run_backend.py recover` finishes or rolls back an interrupted transfer. Runs with tasks, claims, verification, approvals, or edited Markdown are refused and left unchanged.
+
 ### Planned
 - Native Herdr Signals and Relay transport evaluation once upstream becomes available.
 - Extended token billing metrics comparison between Markdown and SQLite state backends.

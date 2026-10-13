@@ -509,54 +509,9 @@ def render_roster(config, flattened, repo, run_dir):
 
 
 def render_session(config, repo):
-    return ("# Herdr Run: " + config["run_id"] + "\n"
-            "Status: unstarted (configuration only; reconcile live Herdr/Git)\n"
-            "Repo: `" + str(repo) + "`\n"
-            "Base: `" + str(config.get("base_ref", "<unresolved>")) + "` @ UNRESOLVED\n"
-            "Integration: `" + str(config.get("integration_branch", "<not-created>")) + "` @ UNRESOLVED (worktree not observed)\n"
-            "Plan revision: NONE ACCEPTED\n"
-            "Approved intent: goal/requirements/constraints/non-goals/acceptance NOT RECORDED\n"
-            "Execution grant: NOT RECORDED (an explicit human request to execute is sufficient; planning-only is not)\n"
-            "Resource budget: active implementation workers " + str(config["max_active_workers"]) +
-            " (parallel authorized: " + str(config.get("parallel_workers_authorized", False)) +
-            "); concurrent heavy local verification jobs 1; remote CI separately observed\n"
-            + ("Lead: inspect Herdr name/kind/pane (Manager + Delegator duties; human approves plan, scope changes and final acceptance)\n"
-               if "lead" in config["agents"] else
-               "Manager: inspect Herdr name/kind/pane\n"
-               "Delegator: inspect Herdr name/kind/pane\n") +
-            "Critic: optional named Claude Sonnet 5.5, ROLE_READY then CRITIQUE_START/CRITIQUE_READY\n"
-            "Verifier: optional dedicated Claude Haiku 5.5 tester or other explicitly assigned capable verifier; exact integrated SHA, ROLE_READY then VERIFY_START + exclusive lock, and VERIFY_READY report\n"
-            "Model overrides: inspect requested worker model/effort, authorized non-Codex spawn owner, SPAWN_REQUEST/READY receipt and runtime confirmation\n"
-            "Verification lock: NONE (record task/owner/pane/tested SHA when held)\n"
-            "Candidate: UNFROZEN (record integration checkout + full SHA + expected diff)\n"
-            "Candidate writer state: OPEN (freeze checkout before verification)\n"
-            "Communication: ROLE_READY -> TASK_START (worker), ROLE_READY -> VERIFY_START + lock (verifier), REPORT_READY / VERIFY_READY / decisions / blockers; avoid polling loops\n\n"
-            "## Task frontier\n"
-            "| Task | User-facing title | Expected outcome | Depends on | State | Worker / Herdr pane | Workspace or worktree | Branch | Source SHA(s) | Integrated SHA(s) | Report / Manager verdict | Local verification (SHA) | Latest-head CI |\n"
-            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
-            "\nHuman summaries: show User-facing title + Expected outcome + verified State; never expose Task or Attempt IDs unless explicitly requested. These descriptions must come from approved PLAN slices, not guesses.\n"
-            "\n## Active attempts and write ownership\n"
-            "| Task/attempt | Agent / pane | Worktree | State | Previous attempt / evidence |\n"
-            "| --- | --- | --- | --- | --- |\n"
-            "Write ownership: one active writer per checkout; no concurrent writers\n"
-            "Retry policy: preserve prior attempt evidence; escalate repeated failures\n\n"
-            "## Signal readiness and receipts\n"
-            "- No ROLE_READY receipts observed; log recipient, event, task, pane, artifact, and observed vs pending state.\n"
-            "- Do not dispatch Worker edits before observed READY.md + ROLE_READY and separate TASK_START.\n"
-            "- Transport blocked: NONE OBSERVED (explicit human approval required for file-only mode)\n\n"
-            "## Decisions and exceptions\n"
-            "- Record human-approved budgets, narrowly scoped deviations and Manager plan revisions here; link evidence rather than duplicating logs.\n\n"
-            "## Cancellation state\n"
-            "- None; when authorized record actor, reason, CANCELLING, affected processes, final CANCELLED/CANCELLATION_BLOCKED; preserve artifacts.\n\n"
-            "## Recoverable ownership\n"
-            "- Workspaces/panes created by run: NONE OBSERVED\n"
-            "- Human-owned workspace/panes NEVER auto-close: inspect and record\n"
-            "- Pending report signals, decisions and blocked states: NONE OBSERVED\n\n"
-            "## Agent prompt submission receipts\n"
-            "Herdr prompt success records submission only. Reconcile the same target and task before replaying.\n\n"
-            "<!-- HERDR_ACTIVATION_RECEIPTS_START -->\n"
-            "```json\n[]\n```\n"
-            "<!-- HERDR_ACTIVATION_RECEIPTS_END -->\n")
+    # Single canonical template lives with the transfer owner so Markdown<->SQLite
+    # conversion can prove a planning checkpoint byte-for-byte.
+    return run_backend.render_session(run_backend.profile_from_config(config, repo))
 
 
 def generated_content(path, new_contents, force, dry_run):
@@ -724,7 +679,8 @@ def main(argv=None):
                 else:
                     (stage / "SESSION.md").write_text(render_session(config, repo), encoding="utf-8")
                 if not standalone:
-                    run_backend.init_selector(stage, config["run_id"], backend)
+                    run_backend.init_selector(stage, config["run_id"], backend,
+                                             profile=run_backend.profile_from_config(config, repo))
                 os.replace(stage, run_dir)
             except Exception:
                 raise RuntimeError("BOOTSTRAP_INCOMPLETE: inspect staging directory before retrying: " + str(stage))

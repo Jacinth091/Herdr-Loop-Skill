@@ -8,4 +8,13 @@ Use this procedure only when the role packet names `sqlite`, `backend.active.jso
 4. **Review and checks:** Require an observed Critic `CRITIQUE_READY` and durable report before `critique-record` and `finding-record`. At the frozen candidate, `verify-start` acquires claims. The approved Verifier or Delegator runs the authorized command through `verify-exec`; capture the result and artifact. Interrupted checks use `verify-reconcile` only after process liveness is resolved. PASS belongs to the exact candidate and cannot be asserted through `verify-record`.
 5. **Decision and recovery:** Record a Manager decision with `decision-record` and hashed rationale. `task-accept` checks reported source, signal receipts, candidate, critique and passing verification. It does not push, merge, deploy or give final human acceptance. Use `status --human` for progress, `recover` for diagnosis, and `run-cancel`/`cancel-finalize` only after human cancellation and observed quiescence.
 
-CLI assertions do not authenticate a human or prove an agent's model. Verify the actual Herdr pane, recipient, actor and model before recording a transition. Normal SQLite activation remains gated until a disposable Windows run demonstrates this procedure and safe backend transfer.
+CLI assertions do not authenticate a human or prove an agent's model. Verify the actual Herdr pane, recipient, actor and model before recording a transition. Normal SQLite activation remains gated until a disposable Windows run demonstrates this procedure.
+
+## Backend transfer (planning checkpoint only)
+
+1. `run_backend.py --run-dir <run> switch --to <backend> --dry-run`: read-only; prints the source fingerprint and blockers. Writes nothing.
+2. A human writes an approval file containing the exact `Backend transfer approval:` line from the dry-run. Agents must not author it.
+3. `run_backend.py --run-dir <run> switch --to <backend> --approval-ref <file>`: archives the source, validates the staged target, retires the source, activates the target, then commits the selector at epoch+1.
+4. If interrupted, `run_backend.py --run-dir <run> recover` rolls back before source retirement or finishes forward after it. A leftover `backend.lock` needs `--clear-stale-lock`, and only after confirming no transfer process is running.
+
+While a transfer is unfinished, every ledger command refuses with `BACKEND_TRANSFER_IN_PROGRESS`.

@@ -169,15 +169,16 @@ class HumanProgressTests(unittest.TestCase):
         self.assertIn('BACKEND_INTEGRITY_BLOCKED', result.stderr)
         self.assertEqual((self.run / 'SESSION.md').read_bytes(), before)
 
-    def test_switch_refuses_before_any_transfer_writes(self):
+    def test_switch_without_approval_writes_nothing(self):
         self.assertEqual(self.bind().returncode, 0)
         before = (self.run / 'SESSION.md').read_bytes()
         result = subprocess.run([sys.executable, str(BACKEND), '--run-dir', str(self.run),
                                  'switch', '--to', 'sqlite', '--approval-ref', 'approval.md'], capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn('TRANSFER_NOT_IMPLEMENTED', result.stdout + result.stderr)
+        self.assertIn('APPROVAL_INVALID', result.stdout + result.stderr)
         self.assertEqual((self.run / 'SESSION.md').read_bytes(), before)
         self.assertFalse((self.run / 'ledger.sqlite').exists())
+        self.assertFalse((self.run / 'transfers').exists())
 
 
 if __name__ == '__main__':

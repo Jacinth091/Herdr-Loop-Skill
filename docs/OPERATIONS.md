@@ -55,7 +55,7 @@ For access recovery, classify the exact boundary first. A same-scope command blo
 - **File:** `<repo>/.herdr-loop/<run-id>/ledger.sqlite`.
 - **Tool:** `skills/herdr-engineering-loop/scripts/herdr_ledger.py`.
 - **Purpose:** Evaluates eliminating context window amplification (e.g. 130KB+ `SESSION.md` logs) through deterministic transactional CLI state transitions.
-- **Mutual Exclusion:** Routine role binding defaults to Markdown. Explicit SQLite binding creates a planning-only ledger; `tools/activate_roles.py` blocks live activation and `run_backend.py switch` blocks transfer until their safety gates pass.
+- **Mutual Exclusion:** Routine role binding defaults to Markdown. Explicit SQLite binding creates a planning-only ledger; `tools/activate_roles.py` blocks live SQLite activation until its safety gate passes. `run_backend.py switch` moves only pristine planning checkpoints between backends, after a dry-run and a human approval file; it never moves a run with tasks, claims, verification, or edited Markdown.
 
 ---
 

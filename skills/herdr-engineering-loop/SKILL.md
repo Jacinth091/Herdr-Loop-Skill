@@ -80,7 +80,7 @@ Herdr Role Pack v2.8 maintains single live authority while providing an isolated
 - **Reference Contract:** Follow [SQLite Ledger Pilot](references/sqlite-ledger-pilot.md) for typed transitions, atomic claim fences, and receipt requirements.
 - **Use Case:** Isolated offline CLI evaluation, token-efficient benchmarking, and automated state transition validation.
 - **Verification Lock:** The CLI uses a per-run claim and an exclusive machine lock during offline checks.
-- **Constraint:** Explicit SQLite binding creates a `PLANNING` ledger; `tools/activate_roles.py` rejects live activation (`SQLITE_BACKEND_NOT_LIVE`). Backend transfer is still unavailable. Keep Markdown as the live default until the Windows lifecycle and transfer gates pass.
+- **Constraint:** Explicit SQLite binding creates a `PLANNING` ledger; `tools/activate_roles.py` rejects live activation (`SQLITE_BACKEND_NOT_LIVE`). Backend transfer is available only for pristine planning checkpoints (`run_backend.py switch --dry-run` first; human approval file required). Keep Markdown as the live default until the Windows lifecycle gate passes.
 - **Candidate procedure:** Read [SQLite role procedure](references/sqlite-live.md) when inspecting an explicitly selected SQLite run.
 
 ---

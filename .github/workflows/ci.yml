@@ -33,7 +33,7 @@ jobs:
 
       - name: Run Unit Test Suite
         run: |
-          python -m unittest tests/test_ledger_pilot.py tests/test_pack.py tests/test_access_probe.py tests/test_progress_view.py tests/test_package_and_update.py
+          python -m unittest tests/test_ledger_pilot.py tests/test_pack.py tests/test_access_probe.py tests/test_backend_transfer.py tests/test_progress_view.py tests/test_package_and_update.py
 
       - name: Validate Cross-Platform Node Installer Dry-Run
         run: |

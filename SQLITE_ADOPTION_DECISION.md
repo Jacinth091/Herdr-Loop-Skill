@@ -2,7 +2,7 @@
 
 **As of October 12, 2026:** adopt SQLite as the **recommended future live coordination ledger**, but do not replace the current Markdown-based execution process yet. The v2.8 download includes a self-contained offline pilot; live operation remains on the v2.7-compatible Markdown state path until the gates below pass.
 
-**Implementation checkpoint, October 13:** Role binding can explicitly create a planning-only SQLite run with a selected-backend record. Omitted `state_backend` still selects Markdown. SQLite role activation and backend switching fail closed; the live tracer, complete role instructions, evidence-preserving conversion, and real Windows Herdr run remain cutover gates. The test fixture is not live-run proof.
+**Implementation checkpoint, October 13:** Role binding can explicitly create a planning-only SQLite run with a selected-backend record. Omitted `state_backend` still selects Markdown. SQLite role activation fails closed. Backend transfer is implemented for pristine planning checkpoints only (no approved plan or grant, no tasks, claims, verification, decisions, or activation receipts), with dry-run, human approval bound to a source fingerprint, an immutable archive, a journaled two-phase cutover, and `recover`. Any other state is refused. The live tracer, complete role instructions, and a real Windows Herdr run remain cutover gates, and the default stays Markdown. The test fixture is not live-run proof.
 
 ## What the uploaded archive established
 

@@ -21,6 +21,16 @@ REAL_OBSERVER = ledger.observe_herdr
 REAL_STOPPED = ledger.observe_stopped
 
 
+def _exited_pid():
+    # A real, already-exited PID: observe_stopped's liveness probe must see it as absent.
+    child = subprocess.Popen([sys.executable, "-c", "pass"])
+    child.wait()
+    return child.pid
+
+
+ABSENT_PID = _exited_pid()
+
+
 def shell(*args, cwd=None):
     return subprocess.run(list(args), cwd=cwd, capture_output=True, text=True, check=True)
 
@@ -433,17 +443,17 @@ class LedgerPilotTests(unittest.TestCase):
 
     def test_observer_checks_stopped_or_closed_pane(self):
         with mock.patch.object(ledger, 'herdr_json', return_value={'panes': [{'pane_id': 'w1:p1'}]}):
-            msg = REAL_STOPPED('w3:p1', 1234)
-            self.assertIn('closed and pid=1234 absent', msg)
+            msg = REAL_STOPPED('w3:p1', ABSENT_PID)
+            self.assertIn(f'closed and pid={ABSENT_PID} absent', msg)
         panes = {'panes': [{'pane_id': 'w3:p1'}]}
-        process = {'process_info': {'pane_id': 'w3:p1', 'foreground_processes': [{'pid': 1234}]}}
+        process = {'process_info': {'pane_id': 'w3:p1', 'foreground_processes': [{'pid': ABSENT_PID}]}}
         with mock.patch.object(ledger, 'herdr_json', side_effect=[panes, process]):
             with self.assertRaisesRegex(ledger.LedgerError, 'UNCERTAIN: observed agent process still present'):
-                REAL_STOPPED('w3:p1', 1234)
+                REAL_STOPPED('w3:p1', ABSENT_PID)
         process_idle = {'process_info': {'pane_id': 'w3:p1', 'foreground_processes': [{'pid': 5678}]}}
         with mock.patch.object(ledger, 'herdr_json', side_effect=[panes, process_idle]):
-            msg = REAL_STOPPED('w3:p1', 1234)
-            self.assertIn('Herdr pane=w3:p1 pid=1234 absent', msg)
+            msg = REAL_STOPPED('w3:p1', ABSENT_PID)
+            self.assertIn(f'Herdr pane=w3:p1 pid={ABSENT_PID} absent', msg)
 
     def test_global_heavy_lock_blocks_another_checkout(self):
         self.frozen()
