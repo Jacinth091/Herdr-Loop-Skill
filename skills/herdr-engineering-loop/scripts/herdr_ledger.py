@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Opt-in Herdr run ledger; live use remains gated on a verified tracer.
+"""Opt-in Herdr run ledger; default promotion remains gated on a Windows tracer.
 
 Python standard library only. Herdr reads and verification commands run outside
 write transactions. The CLI never launches agents or elevates privileges.
@@ -21,6 +21,7 @@ SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 import run_backend
+import verification_guard
 
 VERSION = 3
 TASK = re.compile(r"^T[0-9]{2,4}$")
@@ -276,16 +277,15 @@ def observe_stopped(pane, pid):
             fail("UNCERTAIN: observed agent process still present")
         if is_pid_alive(pid):
             fail("UNCERTAIN: agent PID still alive outside pane foreground")
-        return f"Herdr pane={pane} pid={pid} absent"
+        fail("UNCERTAIN: external worker descendant ownership unavailable; writer claim retained")
     if is_pid_alive(pid):
         fail("UNCERTAIN: pane closed but agent PID is still alive")
-    return f"Herdr pane={pane} closed and pid={pid} absent"
+    fail("UNCERTAIN: external worker descendant ownership unavailable; writer claim retained")
 
 
 def is_pid_alive(pid):
     # Fails toward "alive": only a conclusive no-such-process answer counts as stopped.
-    # ponytail: PID reuse reads as alive (safe, may stall reconcile); grandchildren of the
-    # tracked process are not observed. Add process-start-time / job objects if that bites.
+    # shortcut: PID reuse blocks release; require process-start identity before relaxing this guard.
     if sys.platform == "win32":
         import ctypes
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -334,48 +334,28 @@ def observe_recipient(name, pane):
 
 
 def machine_lock_path():
-    base = Path(os.environ.get("HERDR_LOCKS_DIR") or (Path.home() / ".herdr-locks"))
-    base.mkdir(parents=True, exist_ok=True)
-    return base / "heavy_verification.lock"
+    return verification_guard.lock_path()
 
 
 def check_machine_verification_lock(run_id, verification_id):
-    p = machine_lock_path()
-    if not p.is_file():
-        return
     try:
-        data = json.loads(p.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        fail("BLOCKED: MACHINE_VERIFICATION_LOCK_UNREADABLE; reconcile before testing")
-    if data.get("run_id") != run_id or data.get("verification_id") != verification_id:
-        fail(f"BLOCKED: MACHINE_VERIFICATION_LOCK_HELD by run '{data.get('run_id')}' verification '{data.get('verification_id')}'")
+        verification_guard.read_owner(run_id, verification_id, required=False)
+    except RuntimeError as exc:
+        fail(str(exc))
 
 
 def acquire_machine_verification_lock(run_id, verification_id, pid):
-    p = machine_lock_path()
-    payload = {
-        "run_id": run_id,
-        "verification_id": verification_id,
-        "pid": pid,
-        "acquired_at": stamp()
-    }
     try:
-        with p.open("x", encoding="utf-8") as output:
-            json.dump(payload, output, indent=2)
-            output.flush()
-            os.fsync(output.fileno())
-        return True
-    except FileExistsError:
-        check_machine_verification_lock(run_id, verification_id)
-        return False
+        return verification_guard.acquire(run_id, verification_id, pid)
+    except RuntimeError as exc:
+        fail(str(exc))
 
 
 def release_machine_verification_lock(run_id, verification_id):
-    p = machine_lock_path()
-    if not p.is_file():
-        fail("BLOCKED: MACHINE_VERIFICATION_LOCK_MISSING; reconcile before releasing claim")
-    check_machine_verification_lock(run_id, verification_id)
-    p.unlink()
+    try:
+        verification_guard.release(run_id, verification_id)
+    except RuntimeError as exc:
+        fail(str(exc))
 
 
 def one(conn, sql, args=()):
@@ -493,6 +473,142 @@ def signal_receipt(root, run_id, kind, attempt, event_id, sender, pane, recipien
     return artifact_path, artifact_sha, path, digest
 
 
+def activation_receipts(root):
+    with closing(connect(root, True)) as conn:
+        receipts = {}
+        for row in conn.execute("SELECT receipt FROM event WHERE op='role-activation' ORDER BY seq"):
+            item = json.loads(row["receipt"])
+            receipts[item["operation_id"]] = item
+        return list(receipts.values())
+
+
+def store_activation(root, receipt):
+    with closing(connect(root)) as conn:
+        revision = one(conn, "SELECT count(*) AS n FROM event WHERE op='role-activation'")["n"]
+        return action(conn, root, "role-activation", f"activation_{revision+1}", receipt,
+                      lambda: json.dumps(receipt, sort_keys=True),
+                      allowed_states=("PLANNING", "EXECUTING"), check_plan=False)
+
+
+ROLE_OPERATIONS = {
+    "plan-approve": {"manager", "lead"},
+    "run-authorize": {"delegator", "lead"},
+    "decision-record": {"manager", "lead"},
+    "critique-record": {"critic"},
+    "finding-record": {"critic", "manager", "lead"},
+    "verify-exec": {"verifier"},
+    "verify-record": {"verifier"},
+    "verify-reconcile": {"delegator", "lead", "verifier"},
+}
+COORDINATOR_OPERATIONS = {
+    "task-add", "task-retry", "attempt-reserve", "attempt-attach", "attempt-ready",
+    "attempt-start", "attempt-report", "attempt-release", "candidate-freeze",
+    "verify-start", "verify-abort", "task-accept", "run-cancel", "cancel-block", "cancel-finalize",
+}
+
+
+def role_guard(root, args):
+    """Selected governed runs require a current packet and an observed named caller."""
+    packet = root / "ACTIVATION.json"
+    if packet.is_symlink():
+        fail("ROLE_AUTHORITY_BLOCKED: activation packet is symlinked")
+    if not packet.exists():
+        if (root / run_backend.SELECTOR_FILE).exists():
+            fail("ROLE_AUTHORITY_BLOCKED: selected run requires bound role packets")
+        return  # Explicit offline pilot APIs remain compatible; never infer live authority.
+    manifest = json.loads(packet.read_text(encoding="utf-8"))
+    if manifest.get("generated_by") != "herdr-role-pack" or manifest.get("run_id") != root.name:
+        fail("ROLE_AUTHORITY_BLOCKED: activation manifest identity is invalid")
+    backend, selector = run_backend.get_active_backend(root)
+    epoch = selector["epoch"] if selector else 1
+    if (backend != "sqlite" or manifest.get("state_backend") != backend or
+            manifest.get("backend_epoch") != epoch or getattr(args, "epoch", None) != epoch):
+        fail("BACKEND_INTEGRITY_BLOCKED: refresh packet and supply current --epoch")
+    name = getattr(args, "as_agent", None)
+    entries = [a for a in manifest["agents"] if a["name"] == name]
+    if len(entries) != 1:
+        fail("ROLE_AUTHORITY_BLOCKED: --as-agent must name one assigned role")
+    entry = entries[0]
+    if args.command == "role-confirm":
+        return
+    allowed = ROLE_OPERATIONS.get(args.command, {"delegator", "lead"} if args.command in COORDINATOR_OPERATIONS else set())
+    if entry["role"] not in allowed:
+        fail("ROLE_AUTHORITY_BLOCKED: assigned role cannot perform " + args.command)
+    matches = [r for r in activation_receipts(root) if r["agent"] == name and r.get("epoch") == epoch
+               and r["status"] == "CONFIRMED_APPLIED" and r.get("prompt_sha256") == hashlib.sha256(entry["prompt"].encode()).hexdigest()]
+    if not matches:
+        fail("ROLE_NOT_READY: correlated role acknowledgment required")
+    acknowledgment = matches[-1]
+    if (relative_evidence(root, acknowledgment["ready_path"])[1] != acknowledgment["ready_sha"] or
+            relative_evidence(root, acknowledgment["receipt_path"])[1] != acknowledgment["receipt_sha"]):
+        fail("ROLE_NOT_READY: role acknowledgment evidence changed")
+    observed = observe_herdr(name, acknowledgment["pane"], entry.get("worktree") or manifest["repo"], entry["kind"])
+    if any(observed[key] != acknowledgment["observed"][key] for key in ("pid", "terminal", "model", "effort")):
+        fail("ROLE_NOT_READY: role process changed; acknowledge the new identity")
+    caller_pane = herdr_json("pane", "current", "--current")["pane"].get("pane_id")
+    if not caller_pane or caller_pane != acknowledgment["pane"]:
+        fail("ROLE_AUTHORITY_BLOCKED: caller pane is not the acknowledged role pane")
+    for field in ("actor", "critic", "verifier"):
+        value = getattr(args, field, None)
+        human = getattr(args, "authority", None) == "HUMAN" or args.command in ("run-authorize", "run-cancel")
+        if value and not (field == "actor" and human) and value != name:
+            # A coordinator allocates verification to the separately assigned Verifier.
+            if args.command == "verify-start" and field == "verifier" and any(
+                    a["name"] == value and a["role"] == "verifier" for a in manifest["agents"]):
+                continue
+            fail("ROLE_AUTHORITY_BLOCKED: decision/review actor does not match caller")
+    if args.command in ("attempt-ready", "attempt-start") and (args.operator != name or args.operator_pane != acknowledgment["pane"]):
+        fail("ROLE_AUTHORITY_BLOCKED: signal operator does not match caller")
+    if args.command == "attempt-report" and args.recipient != name:
+        fail("ROLE_AUTHORITY_BLOCKED: report recipient does not match coordinator")
+    if args.command == "attempt-reserve":
+        assigned = [a for a in manifest["agents"] if a["role"] == "worker" and a["name"] == args.agent
+                    and a.get("attempt_id") == args.attempt and a.get("task_id") == args.task]
+        if (len(assigned) != 1 or Path(assigned[0]["worktree"]).resolve() != Path(args.checkout).resolve()
+                or assigned[0]["kind"] != args.provider):
+            fail("ROLE_AUTHORITY_BLOCKED: worker attempt/checkout not assigned")
+
+
+def confirm_role(root, args):
+    manifest = json.loads((root / "ACTIVATION.json").read_text(encoding="utf-8"))
+    entry = next(a for a in manifest["agents"] if a["name"] == args.as_agent)
+    operation_id, prompt_hash = args.operation_id, hashlib.sha256(entry["prompt"].encode()).hexdigest()
+    receipts = {r["operation_id"]: r for r in activation_receipts(root)}
+    previous = receipts.get(operation_id)
+    if (not previous or previous["agent"] != args.as_agent or previous["prompt_sha256"] != prompt_hash
+            or previous.get("epoch") != args.epoch):
+        fail("ROLE_NOT_READY: no matching activation intent")
+    if previous["status"] not in ("SUBMITTING", "SUBMITTED", "OUTCOME_UNCERTAIN", "CONFIRMED_APPLIED"):
+        fail("ROLE_NOT_READY: activation was denied or not submitted")
+    observed = observe_herdr(entry["name"], args.pane,
+                             entry.get("worktree") or manifest["repo"], entry["kind"])
+    if not previous.get("observed") or any(observed[key] != previous["observed"][key] for key in ("pid", "terminal")):
+        fail("ROLE_NOT_READY: activation process changed; send fresh setup to the observed agent")
+    if (entry.get("model") and entry["model"] != observed["model"]) or (entry.get("reasoning_effort") and entry["reasoning_effort"] != observed["effort"]):
+        fail("ROLE_NOT_READY: requested model/effort not observed")
+    path, digest = relative_evidence(root, args.evidence)
+    receipt_path, receipt_sha = relative_evidence(root, args.receipt)
+    expected = (f"run={manifest['run_id']}", f"epoch={args.epoch}", f"agent={args.as_agent}",
+                f"pane={args.pane}", f"role={entry['role']}", f"operation={operation_id}",
+                f"prompt_sha={prompt_hash}")
+    if any(line not in (root / path).read_text(encoding="utf-8").splitlines() for line in expected):
+        fail("ROLE_NOT_READY: readiness does not match role/epoch/prompt")
+    recipient = "human" if entry["role"] == "lead" else entry.get("signal_recipient")
+    if not recipient or args.recipient != recipient:
+        fail("ROLE_NOT_READY: acknowledgment recipient is not assigned")
+    if recipient != "human":
+        observe_recipient(recipient, args.recipient_pane)
+    envelope = f"ROLE_READY {manifest['run_id']} {operation_id} {args.as_agent} {args.pane} {recipient}"
+    lines = (root / receipt_path).read_text(encoding="utf-8").splitlines()
+    if envelope not in lines or f"evidence_sha={digest}" not in lines:
+        fail("ROLE_NOT_READY: correlated role receipt missing")
+    receipt = dict(previous, status="CONFIRMED_APPLIED", epoch=args.epoch, pane=args.pane,
+                   observed=observed, ready_path=path, ready_sha=digest,
+                   receipt_path=receipt_path, receipt_sha=receipt_sha)
+    store_activation(root, receipt)
+    return f"OK role={entry['role']} agent={args.as_agent} epoch={args.epoch} CONFIRMED_APPLIED"
+
+
 def operation(root, args):
     if args.command in ("status", "next", "task-show", "recover", "events", "export", "verify-exec"):
         return _operation(root, args)
@@ -505,6 +621,10 @@ def operation(root, args):
 
 def _operation(root, args):
     name = args.command
+    if name not in ("init", "upgrade", "status", "next", "task-show", "recover", "events", "export"):
+        role_guard(root, args)
+    if name == "role-confirm":
+        return confirm_role(root, args)
     if name == "upgrade":
         return upgrade(root)
     if name == "init":
@@ -952,53 +1072,46 @@ def _operation(root, args):
             output=root / "verifications" / (args.verification+".log")
             if output.exists():fail("verification output already exists; reconcile before retry")
             output.parent.mkdir(exist_ok=True)
-            proc = subprocess.Popen(command, cwd=c["checkout"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            pid = proc.pid
-            def begin():
-                if get(conn,"verification",args.verification)["state"]!="STARTED":
-                    fail("verification already executing")
-                conn.execute("UPDATE verification SET state='RUNNING',command=?,process_pid=? WHERE id=?",
-                             (json.dumps(command),pid,args.verification))
-                return f"OK verification={args.verification} RUNNING pid={pid}"
-            begin_id="begin_"+hashlib.sha256(args.request_id.encode()).hexdigest()
+            def begin(pid):
+                def act():
+                    if get(conn,"verification",args.verification)["state"]!="STARTED":
+                        fail("verification already executing")
+                    conn.execute("UPDATE verification SET state='RUNNING',command=?,process_pid=? WHERE id=?",
+                                 (json.dumps(command),pid,args.verification))
+                    return f"OK verification={args.verification} RUNNING pid={pid}"
+                begin_id="begin_"+hashlib.sha256(args.request_id.encode()).hexdigest()
+                action(conn,root,"verify-exec-begin",begin_id,data,act)
             try:
-                action(conn,root,"verify-exec-begin",begin_id,data,begin)
-            except BaseException:
-                proc.kill(); proc.wait()
-                raise
-            try:
-                stdout, stderr = proc.communicate(timeout=args.timeout)
-                exit_code = proc.returncode
-                raw = (stdout or b"") + b"\n--- stderr ---\n" + (stderr or b"")
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                stdout, stderr = proc.communicate()
-                exit_code = None
-                raw = (stdout or b"") + b"\n--- timeout ---\n" + (stderr or b"")
-            if len(raw)>1_000_000:
-                raw=raw[:1_000_000]+b"\n--- output truncated; result indeterminate ---\n"
-                exit_code=None
+                raw, exit_code, stopped = verification_guard.execute(
+                    str(root.resolve()), args.verification, command, c["checkout"], args.timeout, begin)
+            except (RuntimeError, OSError) as exc:
+                fail("UNCERTAIN: " + str(exc) + "; gate retained")
             output.write_bytes(raw)
             rel,digest=relative_evidence(root,output.relative_to(root).as_posix())
-            state="STALE" if not candidate_identity(c) else ("PASS" if exit_code==0 else "FAIL" if exit_code is not None else "INDETERMINATE")
+            state="UNCERTAIN" if not stopped else ("STALE" if not candidate_identity(c) else ("PASS" if exit_code==0 else "FAIL" if exit_code is not None else "INDETERMINATE"))
             def act():
                 current=get(conn,"verification",args.verification)
                 if current["state"]!="RUNNING":fail("verification no longer running")
                 candidate=get(conn,"candidate",current["candidate_id"])
-                release(conn,candidate["checkout"],args.verification,current["claim_generation"])
-                release(conn,"heavy-local-verification",args.verification,current["heavy_generation"])
+                if stopped:
+                    release(conn,candidate["checkout"],args.verification,current["claim_generation"])
+                    release(conn,"heavy-local-verification",args.verification,current["heavy_generation"])
                 conn.execute("UPDATE verification SET state=?,exit_code=?,evidence_path=?,evidence_sha=?,command=? WHERE id=?",
                              (state,exit_code,rel,digest,json.dumps(command),args.verification))
                 if state=="STALE":conn.execute("UPDATE candidate SET state='STALE' WHERE id=?",(candidate["id"],))
                 return f"OK verification={args.verification} result={state} candidate={current['candidate_id']}"
             result=action(conn,root,name,request,data,act)
-            release_machine_verification_lock(str(root.resolve()),args.verification)
+            if stopped:
+                release_machine_verification_lock(str(root.resolve()),args.verification)
             return result
         if name == "verify-record":
             path,digest=relative_evidence(root,args.evidence)
             data=dict(verification=args.verification,result=args.result,exit=args.exit_code,evidence=path,hash=digest)
             previous=replay(conn,name,request,data)
             if previous is not None:return previous
+            owner = verification_guard.read_owner(str(root.resolve()), args.verification)
+            if owner.get("scope") or owner.get("launching"):
+                fail("running or uncertain verification requires process reconciliation")
             with closing(connect(root,True)) as read:
                 previous=get(read,"verification",args.verification)
                 same=candidate_identity(get(read,"candidate",previous["candidate_id"]))
@@ -1022,6 +1135,9 @@ def _operation(root, args):
             data=dict(verification=args.verification,reason=args.reason)
             previous=replay(conn,name,request,data)
             if previous is not None:return previous
+            owner = verification_guard.read_owner(str(root.resolve()), args.verification)
+            if owner.get("scope") or owner.get("launching"):
+                fail("running or uncertain verification requires process reconciliation")
             def act():
                 v=get(conn,"verification",args.verification)
                 if v["state"]!="STARTED":fail("running or uncertain verification requires process reconciliation")
@@ -1047,6 +1163,12 @@ def _operation(root, args):
                     fail("UNCERTAIN: no recorded verification PID; liveness unknown, claims stay held")
                 if is_pid_alive(pid):
                     fail(f"UNCERTAIN: verification process {pid} still running; cannot release claims")
+                try:
+                    owner = verification_guard.read_owner(str(root.resolve()), args.verification)
+                    if owner.get("launching") or not verification_guard.scope_stopped(owner):
+                        fail("UNCERTAIN: verification descendants still running; claims retained")
+                except RuntimeError as exc:
+                    fail("UNCERTAIN: " + str(exc))
             with closing(connect(root, True)) as read:
                 require_stopped(get(read,"verification",args.verification))
             def act():
@@ -1126,7 +1248,9 @@ def _operation(root, args):
 
 def parser():
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--run-dir",required=True,type=Path,help="One fresh pilot directory; never use an active SESSION.md run")
+    p.add_argument("--run-dir",required=True,type=Path,help="Selected SQLite run directory; never write an active Markdown ledger")
+    p.add_argument("--as-agent", help="Observed assigned role name for governed mutations")
+    p.add_argument("--epoch", type=int, help="Current backend epoch from refreshed role packet")
     sub=p.add_subparsers(dest="command",required=True)
     def add(name, **keys):
         q=sub.add_parser(name)
@@ -1139,6 +1263,7 @@ def parser():
     init_cmd.add_argument("--bootstrap",action="store_true")
     add("plan-approve",plan=dict(required=True),decision_id=dict(required=True),authority=dict(required=True,choices=["MANAGER","HUMAN"]),actor=dict(required=True),attestor=dict(required=True),rationale=dict(required=True),request_id=dict(required=True))
     add("run-authorize",grant_ref=dict(required=True),decision_id=dict(required=True),actor=dict(required=True),attestor=dict(required=True),request_id=dict(required=True))
+    add("role-confirm", operation_id=dict(required=True), pane=dict(required=True), recipient=dict(required=True), recipient_pane=dict(default=""), evidence=dict(required=True), receipt=dict(required=True))
     add("upgrade")
     add("run-cancel",decision_id=dict(required=True),actor=dict(required=True),attestor=dict(required=True),authority_source=dict(required=True),reason=dict(required=True),request_id=dict(required=True))
     add("cancel-block",evidence=dict(required=True),request_id=dict(required=True))
@@ -1176,7 +1301,7 @@ def main(argv=None):
     try:
         print(operation(args.run_dir.resolve(),args))
         return 0
-    except (LedgerError,sqlite3.DatabaseError,FileNotFoundError,subprocess.TimeoutExpired,OSError) as exc:
+    except (LedgerError,sqlite3.DatabaseError,FileNotFoundError,subprocess.TimeoutExpired,OSError,RuntimeError,ValueError,KeyError,TypeError) as exc:
         message="BLOCKED: LEDGER_BUSY" if isinstance(exc,sqlite3.OperationalError) and "locked" in str(exc).lower() else str(exc)
         print("ERROR " + message[:250],file=sys.stderr)
         return 2

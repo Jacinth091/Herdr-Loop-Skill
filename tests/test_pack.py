@@ -53,7 +53,7 @@ class RolePackTests(unittest.TestCase):
     def test_sqlite_pilot_shipped_inside_controller(self):
         pilot = ROOT / "skills" / "herdr-engineering-loop" / "scripts" / "herdr_ledger.py"
         self.assertTrue(pilot.is_file())
-        self.assertIn("live use remains gated", pilot.read_text(encoding="utf8").lower())
+        self.assertIn("default promotion remains gated", pilot.read_text(encoding="utf8").lower())
 
     def test_bind_refuses_existing_sqlite_authority(self):
         run=self.repo / ".herdr-loop" / self.config["run_id"]
@@ -72,7 +72,12 @@ class RolePackTests(unittest.TestCase):
         run = self.repo / ".herdr-loop" / self.config["run_id"]
         self.assertTrue((run / "ledger.sqlite").is_file())
         self.assertFalse((run / "SESSION.md").exists())
-        self.assertIn("SQLITE_BACKEND_NOT_LIVE", self.activate().stderr)
+        env = dict(os.environ)
+        env.pop("HERDR_ENV", None)
+        activation = self.activate(env=env)
+        self.assertEqual(activation.returncode, 2)
+        self.assertIn("HERDR_ENV=1 required", activation.stderr)
+        self.assertNotIn("SQLITE_BACKEND_NOT_LIVE", activation.stderr)
 
     def test_bind_invalid_state_backend_fails(self):
         self.config["state_backend"] = "unknown_backend"

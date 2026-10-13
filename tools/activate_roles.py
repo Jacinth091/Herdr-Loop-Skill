@@ -23,6 +23,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 import access_probe
 import run_backend
+import herdr_ledger
 
 ALLOWED = {"manager", "delegator", "lead", "worker", "verifier", "critic"}
 RECEIPTS_START = "<!-- HERDR_ACTIVATION_RECEIPTS_START -->"
@@ -112,6 +113,8 @@ def _operation(entry, run_id):
         "agent": entry["name"],
         "prompt_sha256": prompt_hash,
     }
+    if entry.get("state_backend") == "sqlite":
+        identity.update(backend_epoch=entry["backend_epoch"], observed_process=entry.get("_observed"))
     operation_id = hashlib.sha256(
         json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()[:24]
@@ -122,6 +125,7 @@ def _receipt(entry, run_id, operation_id, prompt_hash, status, attempts=1, retry
     return {
         "operation_id": operation_id,
         "run_id": run_id,
+        "backend_epoch": entry.get("backend_epoch", 1),
         "task_id": entry.get("task_id", ""),
         "attempt_id": entry.get("attempt_id", ""),
         "role": entry["role"],
@@ -166,7 +170,10 @@ def _dispatch_state(entry, run_id, receipts_by_id):
 
 
 def _run_prompt(herdr, entry):
-    return subprocess.run([herdr, "agent", "prompt", entry["name"], entry["prompt"]],
+    prompt = entry["prompt"]
+    if entry.get("_ack_envelope"):
+        prompt += "\n" + entry["_ack_envelope"]
+    return subprocess.run([herdr, "agent", "prompt", entry["name"], prompt],
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                           text=True, timeout=30, check=False)
 
@@ -195,8 +202,6 @@ def main(argv=None):
         backend, selector = run_backend.get_active_backend(run_dir)
         if manifest.get("state_backend", "markdown") != backend or manifest.get("backend_epoch", 1) != (selector["epoch"] if selector else 1):
             raise ValueError("BACKEND_INTEGRITY_BLOCKED: activation packet does not match selected backend and epoch")
-        if manifest.get("state_backend") == "sqlite" and not args.dry_run:
-            raise ValueError("SQLITE_BACKEND_NOT_LIVE: role lifecycle and Windows Herdr tracer are not verified; activation is gated")
         requested = ALLOWED if args.roles == "all" else set(args.roles.split(","))
         if not requested or not requested <= ALLOWED:
             raise ValueError("--roles must contain only manager,delegator,lead,worker,verifier,critic or all")
@@ -207,6 +212,8 @@ def main(argv=None):
         if len(set(names)) != len(names):
             raise ValueError("Duplicate agent name in activation manifest")
         for entry in targets:
+            entry["backend_epoch"] = manifest.get("backend_epoch", 1)
+            entry["state_backend"] = backend
             if entry["role"] == "worker":
                 worktree_text = entry.get("worktree", "")
                 if not worktree_text:
@@ -227,11 +234,11 @@ def main(argv=None):
             return 0
         if os.environ.get("HERDR_ENV") != "1":
             raise ValueError("HERDR_ENV=1 required; run from an existing Herdr-managed pane")
-        if backend != "markdown":
-            raise ValueError("No live receipt writer is available for the selected backend")
         session_path = run_dir / "SESSION.md"
-        _, receipts, _ = _read_receipts(session_path)
-        if not receipts and RECEIPTS_START not in session_path.read_text(encoding="utf-8"):
+        read_receipts = (lambda: herdr_ledger.activation_receipts(run_dir)) if backend == "sqlite" else (lambda: _read_receipts(session_path)[1])
+        store_receipt = (lambda receipt: herdr_ledger.store_activation(run_dir, receipt)) if backend == "sqlite" else (lambda receipt: _store_receipt(session_path, receipt))
+        receipts = read_receipts()
+        if backend == "markdown" and not receipts and RECEIPTS_START not in session_path.read_text(encoding="utf-8"):
             # Older Markdown runs get the receipt section on their first attempted submission.
             _write_receipts(session_path, [])
         herdr = shutil.which("herdr")
@@ -255,6 +262,11 @@ def main(argv=None):
             print("ERROR no role prompts were sent; all selected agents must pass read-only preflight", file=sys.stderr)
             return 2
 
+        if backend == "sqlite":
+            for entry in targets:
+                agent = herdr_ledger.herdr_json("agent", "get", entry["name"])["agent"]
+                entry["_observed"] = herdr_ledger.observe_herdr(entry["name"], agent["pane_id"],
+                    entry.get("worktree") or manifest["repo"], entry["kind"])
         by_id = {item["operation_id"]: item for item in receipts}
         dispatch = []
         blocked = False
@@ -262,7 +274,7 @@ def main(argv=None):
             state, receipt, reason = _dispatch_state(entry, manifest["run_id"], by_id)
             if state == "blocked":
                 if receipt.get("status") == "OUTCOME_UNCERTAIN" and by_id.get(receipt["operation_id"], {}).get("status") != "OUTCOME_UNCERTAIN":
-                    _store_receipt(session_path, receipt)
+                    store_receipt(receipt)
                     by_id[receipt["operation_id"]] = receipt
                 print("BLOCKED", entry["name"], receipt.get("status"),
                       "operation_id=" + receipt["operation_id"], reason)
@@ -270,34 +282,39 @@ def main(argv=None):
             elif state == "skip":
                 print("CONFIRMED_APPLIED", entry["name"], "operation_id=" + receipt["operation_id"])
             else:
+                if backend == "sqlite":
+                    receipt.update(epoch=manifest["backend_epoch"], observed=entry["_observed"])
                 dispatch.append((entry, receipt))
         if blocked:
-            print("ERROR no new prompts sent; reconcile blocked operation(s) in SESSION.md", file=sys.stderr)
+            print("ERROR no new prompts sent; reconcile blocked operation(s) in the selected ledger", file=sys.stderr)
             return 2
 
         for entry, receipt in dispatch:
-            _store_receipt(session_path, receipt)
+            if backend == "sqlite":
+                entry["_ack_envelope"] = (f"ROLE_ACK operation={receipt['operation_id']} prompt_sha={receipt['prompt_sha256']} "
+                                          f"run={manifest['run_id']} epoch={manifest['backend_epoch']}")
+            store_receipt(receipt)
             try:
                 result = _run_prompt(herdr, entry)
             except subprocess.TimeoutExpired as exc:
                 output = access_probe.sanitize_error(getattr(exc, "stderr", None) or getattr(exc, "stdout", None))
                 receipt["status"] = "OUTCOME_UNCERTAIN"
                 receipt["evidence"] = "Herdr prompt call timed out; delivery may have occurred. " + output
-                _store_receipt(session_path, receipt)
+                store_receipt(receipt)
                 print("OUTCOME_UNCERTAIN", entry["name"], "operation_id=" + receipt["operation_id"], receipt["evidence"])
                 break
             except OSError as exc:
                 error = getattr(exc, "strerror", None) or type(exc).__name__
                 receipt["status"] = "CONFIRMED_NOT_APPLIED"
                 receipt["evidence"] = "Herdr process could not be started: " + access_probe.sanitize_error(error)
-                _store_receipt(session_path, receipt)
+                store_receipt(receipt)
                 print("CONFIRMED_NOT_APPLIED", entry["name"], "operation_id=" + receipt["operation_id"], receipt["evidence"])
                 break
 
             if result.returncode == 0:
                 receipt["status"] = "SUBMITTED"
                 receipt["evidence"] = "Herdr returned 0; submission is not proof of recipient receipt."
-                _store_receipt(session_path, receipt)
+                store_receipt(receipt)
                 print("SUBMITTED", entry["name"], "(prompt submission is not proof of receipt)",
                       "operation_id=" + receipt["operation_id"])
                 continue
@@ -306,13 +323,13 @@ def main(argv=None):
             failure = access_probe.classify_failure(error, "agent_prompt")
             receipt["status"] = "DENIED" if failure == "DENIED" else "OUTCOME_UNCERTAIN"
             receipt["evidence"] = (failure + (": " + error if error else "; Herdr returned " + str(result.returncode)))
-            _store_receipt(session_path, receipt)
+            store_receipt(receipt)
             print(receipt["status"], entry["name"], "operation_id=" + receipt["operation_id"], receipt["evidence"])
             break
         return 0 if all(item.get("status") in ("SUBMITTED", "CONFIRMED_APPLIED")
-                        for item in _read_receipts(session_path)[1]
+                        for item in read_receipts()
                         if item.get("operation_id") in {r["operation_id"] for _, r in dispatch}) else 2
-    except (ValueError, KeyError, OSError, RuntimeError, subprocess.TimeoutExpired, json.JSONDecodeError) as exc:
+    except (ValueError, KeyError, OSError, RuntimeError, herdr_ledger.LedgerError, subprocess.TimeoutExpired, json.JSONDecodeError) as exc:
         message = getattr(exc, "strerror", None) or str(exc)
         print("ERROR", access_probe.sanitize_error(message), file=sys.stderr)
         return 2

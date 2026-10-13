@@ -283,16 +283,14 @@ class LedgerPilotTests(unittest.TestCase):
     def start_orphaned_verification(self):
         """verify-exec dies after launch while its real test process keeps running."""
         self.verifying()
-        real_popen = subprocess.Popen
         launched = []
-        def popen(argv, *args, **kwargs):
-            proc = real_popen(argv, *args, **kwargs)
-            if argv and argv[0] == sys.executable:
-                proc.communicate = mock.Mock(side_effect=OSError('simulated verify-exec crash'))
-                launched.append(proc)
-            return proc
-        with mock.patch.object(ledger.subprocess, 'Popen', side_effect=popen):
-            with self.assertRaisesRegex(OSError, 'simulated verify-exec crash'):
+        def crashed_execute(run, verification, argv, cwd, timeout, begin):
+            child = subprocess.Popen(argv, cwd=cwd)
+            launched.append(child)
+            begin(child.pid)
+            raise OSError('simulated verify-exec crash')
+        with mock.patch.object(ledger.verification_guard, 'execute', side_effect=crashed_execute):
+            with self.assertRaisesRegex(ledger.LedgerError, 'simulated verify-exec crash'):
                 self.cmd('verify-exec', '--verification', 'V01', '--request-id', 'interrupted', '--',
                          sys.executable, '-c', 'import time; time.sleep(60)')
         child = launched[0]
@@ -316,7 +314,11 @@ class LedgerPilotTests(unittest.TestCase):
         self.assertEqual(('RUNNING', 1), self.heavy_lock())
 
         child.kill(); child.wait()
-        recon = self.cmd('verify-reconcile', '--verification', 'V01', '--reason', 'killed', '--request-id', 'rec-dead')
+        # This fixture did not launch through the ownership helper: parent absence alone is insufficient.
+        self.assertIn('no descendant ownership', self.cmd('verify-reconcile', '--verification', 'V01',
+            '--reason', 'killed', '--request-id', 'rec-unknown', ok=False))
+        with mock.patch.object(ledger.verification_guard, 'scope_stopped', return_value=True):
+            recon = self.cmd('verify-reconcile', '--verification', 'V01', '--reason', 'killed', '--request-id', 'rec-dead')
         self.assertIn('claims-released', recon)
         self.assertEqual(('INDETERMINATE', 0), self.heavy_lock())
 
@@ -443,8 +445,8 @@ class LedgerPilotTests(unittest.TestCase):
 
     def test_observer_checks_stopped_or_closed_pane(self):
         with mock.patch.object(ledger, 'herdr_json', return_value={'panes': [{'pane_id': 'w1:p1'}]}):
-            msg = REAL_STOPPED('w3:p1', ABSENT_PID)
-            self.assertIn(f'closed and pid={ABSENT_PID} absent', msg)
+            with self.assertRaisesRegex(ledger.LedgerError, 'descendant ownership unavailable'):
+                REAL_STOPPED('w3:p1', ABSENT_PID)
         panes = {'panes': [{'pane_id': 'w3:p1'}]}
         process = {'process_info': {'pane_id': 'w3:p1', 'foreground_processes': [{'pid': ABSENT_PID}]}}
         with mock.patch.object(ledger, 'herdr_json', side_effect=[panes, process]):
@@ -452,8 +454,8 @@ class LedgerPilotTests(unittest.TestCase):
                 REAL_STOPPED('w3:p1', ABSENT_PID)
         process_idle = {'process_info': {'pane_id': 'w3:p1', 'foreground_processes': [{'pid': 5678}]}}
         with mock.patch.object(ledger, 'herdr_json', side_effect=[panes, process_idle]):
-            msg = REAL_STOPPED('w3:p1', ABSENT_PID)
-            self.assertIn(f'Herdr pane=w3:p1 pid={ABSENT_PID} absent', msg)
+            with self.assertRaisesRegex(ledger.LedgerError, 'descendant ownership unavailable'):
+                REAL_STOPPED('w3:p1', ABSENT_PID)
 
     def test_global_heavy_lock_blocks_another_checkout(self):
         self.frozen()

@@ -343,8 +343,10 @@ def prompt_for(run_id, role, agent, run_dir, recipient=None, config=None):
                    "All new worker/verifier processes must be independently visible in Herdr, "
                    "provisioned by the Delegator; no fallback to internal agents.")
     if config and config.get("state_backend") == "sqlite":
-        prompt = ("SQLITE_BACKEND_NOT_LIVE: This is a planning-only SQLite candidate. "
-                  "Do not dispatch agents or execute run work until the live lifecycle gate is lifted. " + prompt)
+        prompt += (f" SQLITE ROLE ACK: backend epoch {config['_backend_epoch']}; confirm setup with herdr_ledger.py "
+                   "role-confirm using run/epoch/name/pane/role/operation/prompt_sha readiness and correlated receipt. "
+                   f"Read {SCRIPTS_DIR.parent / 'references' / 'sqlite-live.md'} for the acknowledgment format. "
+                   "Use --as-agent with your assigned name and --epoch for typed mutations. Setup grants no task execution.")
     return prompt
 
 
@@ -387,7 +389,7 @@ def render_packet(run_id, role, agent, repo, run_dir, config):
              f"Repository: `{repo}`", f"Run directory: `{run_dir}`",
              f"State backend: `{config['state_backend']}`; epoch: `{config['_backend_epoch']}`",
              f"SQLite ledger CLI: `{SCRIPTS_DIR / 'herdr_ledger.py'}`" if config['state_backend'] == 'sqlite' else "Markdown authority: `SESSION.md`",
-             "SQLITE_BACKEND_NOT_LIVE: planning candidate only; activation and dispatch are gated." if config['state_backend'] == 'sqlite' else "Live Markdown workflow is selected.",
+             "SQLite activation records observed setup only; execution requires approved plan and separate human grant. Windows E2E promotion remains gated." if config['state_backend'] == 'sqlite' else "Live Markdown workflow is selected.",
              f"Base reference (verify immutable SHA before work): `{config.get('base_ref', '<unset>')}`",
              f"Pane (verify live): `{agent.get('pane_id', '') or '<inspect Herdr>'}`",
              f"Workspace (verify live): `{agent.get('workspace_id', '') or '<inspect Herdr>'}`",
@@ -631,7 +633,7 @@ def main(argv=None):
             ledger_target = "ledger.sqlite" if backend == "sqlite" else "SESSION.md"
             intro = [MANAGED, "# Herdr activation prompts: " + config["run_id"], "",
                      f"Selected backend: {backend}; epoch: {config['_backend_epoch']}.",
-                     "SQLITE_BACKEND_NOT_LIVE: planning candidate only; activation and dispatch are gated." if backend == "sqlite" else "Markdown live workflow is selected.",
+                     "SQLite activation records observed setup only; execution requires approved plan and separate human grant. Windows E2E promotion remains gated." if backend == "sqlite" else "Markdown live workflow is selected.",
                      "The installer makes skills discoverable. The roster below **assigns** roles. Neither step starts an agent.",
                      "To activate live agents: open the relevant Herdr panes, confirm their names, then paste each prompt",
                      "through Herdr's `agent prompt` command, or use `tools/activate_roles.py` inside Herdr.",
