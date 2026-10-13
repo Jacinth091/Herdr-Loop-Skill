@@ -13,6 +13,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [2.8.2] - 2026-10-13
+
+### Fixed
+- **Preflight Rollback Integrity (AUTH-03):** Hardened `restore_backup()` in `tools/update.py` to verify that every original backup item exists on disk and matches its manifest SHA-256 before any filesystem mutation. Missing original backup files fail closed with `REFUSE`, preventing erroneous slot deletion.
+- **Selective Role Update Preservation (FLOW-05):** In `tools/update.py`, updates now inspect each agent's installed roles and invoke `bin/install.js --agents <agent> --roles <roles>`, ensuring updates do not widen an existing minimal footprint to all 7 roles.
+- **Rollback Candidate Filtering (FLOW-07):** In `tools/update.py`, `--rollback latest` and `--list-backups` filter strictly for directories containing valid `backup_manifest.json` files sorted newest first, avoiding incompatible Node backup folders and failing closed if no valid backups exist.
+- **Engine-Aware Critic and Lead Prompts (FLOW-08):** In `tools/role_bind.py`, Critic prompts adapt to the agent engine (no Sonnet 5.5 demand for Codex/Agy Critics), and Lead spawner rules restrict cross-model Codex worker launching strictly to Claude Leads.
+- **Lead Signal Transport Clarity (DOC-05):** In `tools/role_bind.py`, Lead role packets and activation manifests set `signal_transport='human-direct'` for direct console interaction with the human operator rather than invalid `herdr agent prompt the human` commands.
+- **Strict Option Parsing (QUAL-03):** In `bin/install.js`, `--target-dir` validates that the argument is present, non-empty, does not start with `-`, and is an absolute path, failing fast with exit code 2.
+- **State Backend Authority Clarity (DOC-03, ARCH-01):** In `skills/herdr-engineering-loop/SKILL.md`, clarified that runtime authority is Delegator-owned `SESSION.md` and SQLite is an isolated offline CLI pilot (`role_bind.py` fails closed with `SQLITE_BACKEND_NOT_LIVE`), and documented that heavy verification locking is a per-run ledger table in SQLite pilot and advisory serial coordination in Markdown.
+
+---
+
 ## [2.8.1] - 2026-10-13
 
 ### Added

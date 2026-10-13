@@ -147,9 +147,10 @@ class PackageAndUpdateTests(unittest.TestCase):
             Path(dest).write_bytes(files[asset["name"]])
 
         def fake_install(argv, check=False):
-            # Behaves like 'install.js --force --agents ...': writes every managed role for those agents.
+            # Behaves like 'install.js --force --agents ... --roles ...'
+            roles = argv[argv.index("--roles") + 1].split(",") if "--roles" in argv else update.MANAGED_SKILLS
             for agent in argv[argv.index("--agents") + 1].split(","):
-                for skill in update.MANAGED_SKILLS:
+                for skill in roles:
                     self.make_skill(agent, skill, "v9")
             return subprocess.CompletedProcess(argv, 0)
 
@@ -210,6 +211,23 @@ class PackageAndUpdateTests(unittest.TestCase):
         self.assertEqual([p.name for p in target.iterdir()], ["herdr-worker"])
         res = subprocess.run(node + ["--agents", "claude"], capture_output=True, text=True)
         self.assertEqual(res.returncode, 2)
+
+    @unittest.skipUnless(shutil.which("node"), "node not installed")
+    def test_node_installer_target_dir_validation_fails_fast(self):
+        # Missing argument
+        res = subprocess.run(["node", str(ROOT / "bin" / "install.js"), "--target-dir"],
+                             capture_output=True, text=True)
+        self.assertEqual(res.returncode, 2)
+        # Next token is another flag
+        res = subprocess.run(["node", str(ROOT / "bin" / "install.js"), "--target-dir", "--dry-run"],
+                             capture_output=True, text=True)
+        self.assertEqual(res.returncode, 2)
+        self.assertIn("requires a valid absolute directory path", res.stderr)
+        # Relative path
+        res = subprocess.run(["node", str(ROOT / "bin" / "install.js"), "--target-dir", "relative/path"],
+                             capture_output=True, text=True)
+        self.assertEqual(res.returncode, 2)
+        self.assertIn("must be an absolute path", res.stderr)
 
     def test_ai_install_guide_only_uses_real_installer_flags(self):
         guide = (ROOT / "INSTALL-FOR-AI.md").read_text(encoding="utf-8")
@@ -275,8 +293,16 @@ class PackageAndUpdateTests(unittest.TestCase):
         self.assertEqual(self.run_update(), 0)
         argv = self.installer.call_args.args[0]
         self.assertEqual(argv[argv.index("--agents") + 1], "codex")  # never spreads to claude/agy
+        self.assertEqual(argv[argv.index("--roles") + 1], "herdr-manager")  # only updates owned roles
         self.assertEqual(list(self.dirs["claude"].iterdir()), [])
         self.assertEqual((self.dirs["codex"] / "herdr-manager" / "SKILL.md").read_text(), "v9")
+
+        # Simulate an update that added a new slot to verify rollback removes newly installed slots
+        self.make_skill("codex", "herdr-critic", "v9")
+        latest_backup = sorted(self.backups.iterdir(), reverse=True)[0]
+        manifest = update.read_manifest(latest_backup)
+        manifest["installed"] = {key: update.hash_tree(path) for key, path in update.managed_slots().items()}
+        update.write_manifest(latest_backup, manifest)
         self.assertTrue((self.dirs["codex"] / "herdr-critic").exists())
 
         self.assertEqual(self.run_update("--rollback", "latest"), 0)
@@ -285,9 +311,62 @@ class PackageAndUpdateTests(unittest.TestCase):
         # The pre-rollback snapshot is now 'latest', so the rollback itself can be undone.
         self.assertEqual(len(list(self.backups.iterdir())), 2)
 
+    def test_rollback_refuses_when_original_backup_file_is_missing(self):
+        self.isolate()
+        self.make_skill("codex", "herdr-manager", "v1")
+        backup = update.backup_managed_skills()
+        # Delete original backup file to simulate missing backup source
+        shutil.rmtree(backup / "codex" / "herdr-manager")
+        with self.assertRaisesRegex(RuntimeError, "REFUSE: backup copy .* is missing"):
+            update.restore_backup(backup)
+        # Original skill was NOT deleted or touched
+        self.assertEqual((self.dirs["codex"] / "herdr-manager" / "SKILL.md").read_text(), "v1")
+
+    def test_update_selective_roles_does_not_widen_installations(self):
+        self.isolate()
+        self.make_skill("codex", "herdr-manager", "v1")
+        self.make_skill("claude", "herdr-lead", "v1")
+        self.fake_release(good_sums=True)
+
+        self.assertEqual(self.run_update(), 0)
+        calls = [c.args[0] for c in self.installer.call_args_list]
+        self.assertEqual(len(calls), 2)
+        by_agent = {c[c.index("--agents") + 1]: c[c.index("--roles") + 1] for c in calls}
+        self.assertEqual(by_agent["codex"], "herdr-manager")
+        self.assertEqual(by_agent["claude"], "herdr-lead")
+        # Ensure agy was never touched
+        self.assertEqual(list(self.dirs["agy"].iterdir()), [])
+
+    def test_rollback_latest_ignores_empty_node_backup_and_finds_valid_manifest(self):
+        self.isolate()
+        self.make_skill("codex", "herdr-manager", "v1")
+        py_backup = update.backup_managed_skills()
+        # Create a newer node backup without backup_manifest.json
+        node_backup = self.backups / "install-backup-9999999999999"
+        node_backup.mkdir()
+        (node_backup / "some_file.txt").write_text("node backup data")
+
+        # Edit skill
+        (self.dirs["codex"] / "herdr-manager" / "SKILL.md").write_text("v2", encoding="utf-8")
+        # Rollback latest should pick py_backup, NOT the newer node_backup
+        valid = update.get_valid_backups()
+        self.assertEqual(len(valid), 1)
+        self.assertEqual(valid[0][0], py_backup)
+
+        self.assertEqual(self.run_update("--rollback", "latest"), 0)
+        self.assertEqual((self.dirs["codex"] / "herdr-manager" / "SKILL.md").read_text(), "v1")
+
+    def test_rollback_latest_fails_closed_when_no_valid_backups(self):
+        self.isolate()
+        self.backups.mkdir(parents=True, exist_ok=True)
+        node_backup = self.backups / "install-backup-12345"
+        node_backup.mkdir()
+        self.assertEqual(self.run_update("--rollback", "latest"), 1)
+
     def test_rollback_refuses_slot_edited_after_update(self):
         self.isolate()
         self.make_skill("codex", "herdr-manager", "v1")
+        self.make_skill("codex", "herdr-worker", "v1")
         self.fake_release(good_sums=True)
         self.assertEqual(self.run_update(), 0)
         edited = self.dirs["codex"] / "herdr-manager" / "SKILL.md"
@@ -295,7 +374,7 @@ class PackageAndUpdateTests(unittest.TestCase):
 
         self.assertEqual(self.run_update("--rollback", "latest"), 1)
         self.assertEqual(edited.read_text(), "v9 + my local notes")
-        self.assertTrue((self.dirs["codex"] / "herdr-critic").exists())  # nothing touched
+        self.assertEqual((self.dirs["codex"] / "herdr-worker" / "SKILL.md").read_text(), "v9")  # nothing touched
         self.assertEqual(len(list(self.backups.iterdir())), 1)  # no snapshot on refusal
 
     def test_rollback_refuses_unmanaged_destination(self):

@@ -1,6 +1,6 @@
 ---
 name: herdr-engineering-loop
-description: Bootstrap, coordinate, inspect, and recover human-directed multi-agent engineering workflows inside Herdr. Use for session setup, workspace provisioning, role packet binding (Manager, Delegator, Worker, Verifier, Critic), dual-backend state management (Markdown or ACID SQLite), serial verification locks, model launch routing, and fail-closed crash recovery.
+description: Bootstrap, coordinate, inspect, and recover human-directed multi-agent engineering workflows inside Herdr. Use for session setup, workspace provisioning, role packet binding (Manager, Delegator, Worker, Verifier, Critic), dual-backend state management (Markdown live authority or ACID SQLite offline pilot), serial verification locks, model launch routing, and fail-closed crash recovery.
 ---
 
 # Herdr Engineering Loop: Session Controller Guide
@@ -63,22 +63,24 @@ git status --short
 
 ---
 
-## 4. Dual State Backends: Markdown vs. Transactional SQLite
+## 4. State Backends: Markdown Authority vs. Offline SQLite Pilot
 
-Herdr Role Pack v2.8 supports two mutually exclusive state backends configured in `roles.json`:
+Herdr Role Pack v2.8 maintains single live authority while providing an isolated offline pilot engine:
 
-### Backend A: Markdown Ledger (`state_backend: "markdown"`, Default)
+### Active Runtime Authority: Markdown Ledger (`state_backend: "markdown"`, Active Authority)
 - **Primary Document:** `<repo>/.herdr-loop/<run-id>/SESSION.md`.
-- **Ownership:** Maintained directly by `herdr-delegator`.
-- **Use Case:** Transparent, human-editable, zero-tool dependency runs where context length is not a constraint.
-- **Constraint:** Do not initialize `ledger.sqlite` in a Markdown-backed run.
+- **Ownership:** Maintained directly by `herdr-delegator` (or `herdr-lead` in lead mode).
+- **Use Case:** Transparent, human-editable, zero-tool dependency live runs where Markdown and Git history are authoritative.
+- **Verification Lock:** Serial heavy verification lock is an advisory coordination invariant tracked in `SESSION.md`.
+- **Constraint:** Do not initialize `ledger.sqlite` in a Markdown-backed live run.
 
-### Backend B: Transactional SQLite Ledger (`state_backend: "sqlite"`, Opt-in)
+### Isolated Offline Engine: Transactional SQLite Ledger (`scripts/herdr_ledger.py`, Offline Pilot Only)
 - **Primary Database:** `<repo>/.herdr-loop/<run-id>/ledger.sqlite`.
 - **Ownership:** Deterministic CLI commands via `scripts/herdr_ledger.py`.
 - **Reference Contract:** Follow [SQLite Ledger Pilot](references/sqlite-ledger-pilot.md) for detailed schema v2 transitions, atomic claim fences, and receipt requirements.
-- **Use Case:** Token-efficient runs eliminating context bloat (e.g. replacing 130KB+ `SESSION.md` logs), multi-step tasks, and automated provenance auditing.
-- **Constraint:** `SESSION.md` is strictly suppressed; mutual exclusion is enforced by `tools/role_bind.py`.
+- **Use Case:** Isolated offline CLI evaluation, token-efficient benchmarking, and automated state transition validation.
+- **Verification Lock:** Heavy verification lock is enforced via per-run SQLite ledger table `active_verification_lock`.
+- **Constraint:** Live runs strictly reject SQLite. `tools/role_bind.py` explicitly fails closed (`SQLITE_BACKEND_NOT_LIVE`) if configured with `state_backend: "sqlite"`.
 
 ---
 
@@ -134,9 +136,9 @@ Always verify actual model and reasoning effort via `herdr agent get <name>` bef
 
 ---
 
-## 7. SQLite Transactional Ledger Execution Sequence
+## 7. SQLite Transactional Ledger Execution Sequence (Offline Pilot)
 
-When operating under `state_backend: "sqlite"`, the Controller or Delegator invokes deterministic transitions using `scripts/herdr_ledger.py`:
+When testing transitions offline using the pilot CLI `scripts/herdr_ledger.py`:
 
 ```mermaid
 sequenceDiagram

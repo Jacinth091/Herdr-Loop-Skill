@@ -122,7 +122,7 @@ class RolePackTests(unittest.TestCase):
 
     def test_manifest_disallows_codex_subagents(self):
         manifest = json.loads((ROOT / "manifest.json").read_text(encoding="utf8"))
-        self.assertEqual(manifest["version"], "2.8.1")
+        self.assertEqual(manifest["version"], "2.8.2")
         self.assertEqual(manifest["policy"]["claude_verifier_model_default"], "claude-haiku-5-5")
         self.assertFalse(manifest["policy"]["codex_native_subagents_allowed"])
         self.assertTrue(manifest["policy"]["workers_must_be_herdr_spawned"])
@@ -519,6 +519,15 @@ class RolePackTests(unittest.TestCase):
         self.assertIn("WAIT for CRITIQUE_START", act.stdout)
         self.assertIn("CRITIQUE_READY", act.stdout)
 
+    def test_critic_prompt_for_non_claude_does_not_demand_sonnet(self):
+        self.config["agents"]["critic"] = {"name": "critic_t01", "kind": "codex"}
+        self.save()
+        self.assertEqual(self.bind("--force").returncode, 0)
+        entries = json.loads((self.repo / ".herdr-loop/feature-example/ACTIVATION.json").read_text(encoding="utf8"))["agents"]
+        critic = next(a for a in entries if a["role"] == "critic")
+        self.assertNotIn("Verify Sonnet 5.5", critic["prompt"])
+        self.assertIn("Verify configured active model", critic["prompt"])
+
     def test_access_probe_without_herdr_is_not_readiness_proof(self):
         workspace = self.root / "worker"
         workspace.mkdir()
@@ -640,7 +649,7 @@ class RolePackTests(unittest.TestCase):
                 self.assertIn("one active writing attempt", reference)
                 self.assertLess(len(reference.splitlines()), 100)
         manifest = json.loads((ROOT / "manifest.json").read_text(encoding="utf8"))
-        self.assertEqual(manifest["version"], "2.8.1")
+        self.assertEqual(manifest["version"], "2.8.2")
         self.assertTrue(manifest["policy"]["relay_runtime_not_required"])
 
     # --- Lead mode: one agent holds Manager + Delegator duties ---
@@ -663,6 +672,7 @@ class RolePackTests(unittest.TestCase):
         self.assertIn("the human gives final acceptance", lead["prompt"])
         self.assertIn("herdr agent start", lead["prompt"])
         self.assertEqual(lead["signal_recipient"], "the human (not a Herdr agent)")
+        self.assertEqual(lead["signal_transport"], "human-direct")
         self.assertEqual(worker["signal_recipient"], "lead")
         self.assertEqual(worker["spawn_owner"], "lead")
         self.assertIn("Signal roles: Lead lead -> human", (run_dir / "ROSTER.md").read_text(encoding="utf8"))
@@ -671,6 +681,8 @@ class RolePackTests(unittest.TestCase):
         self.assertNotIn("Manager: inspect", session)
         packet = (run_dir / "role-packets" / "lead.md").read_text(encoding="utf8")
         self.assertIn("Forbidden: implementing product code, acting as Worker/Verifier/Critic", packet)
+        self.assertIn("Transport: `human-direct`", packet)
+        self.assertNotIn("herdr agent prompt the human", packet)
 
     def test_lead_cannot_be_mixed_with_manager_or_delegator(self):
         self.use_lead_config()

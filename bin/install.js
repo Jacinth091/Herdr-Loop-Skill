@@ -100,12 +100,29 @@ function parseArgs(args) {
       options.uninstall = true;
     } else if (arg === '--with-herdr') {
       options.withHerdr = true;
-    } else if (arg === '--agents' && i + 1 < args.length) {
+    } else if (arg === '--agents') {
+      if (i + 1 >= args.length || args[i + 1].startsWith('-') || !args[i + 1].trim()) {
+        console.error('Error: --agents requires a comma-separated list of agents');
+        process.exit(2);
+      }
       options.agents = args[++i];
-    } else if (arg === '--roles' && i + 1 < args.length) {
+    } else if (arg === '--roles') {
+      if (i + 1 >= args.length || args[i + 1].startsWith('-') || !args[i + 1].trim()) {
+        console.error('Error: --roles requires a comma-separated list of roles');
+        process.exit(2);
+      }
       options.roles = args[++i];
-    } else if (arg === '--target-dir' && i + 1 < args.length) {
-      options.targetDir = args[++i];
+    } else if (arg === '--target-dir') {
+      if (i + 1 >= args.length || args[i + 1].startsWith('-') || !args[i + 1].trim()) {
+        console.error('Error: --target-dir requires a valid absolute directory path argument');
+        process.exit(2);
+      }
+      const val = args[++i].trim();
+      if (!path.isAbsolute(val)) {
+        console.error(`Error: --target-dir must be an absolute path: ${val}`);
+        process.exit(2);
+      }
+      options.targetDir = path.resolve(val);
     } else {
       console.error(`Unknown option: ${arg}`);
       printHelp();
