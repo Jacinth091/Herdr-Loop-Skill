@@ -17,6 +17,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ### Added
 - **Lead role (`herdr-lead`):** a budget option where one agent holds both the Manager and Delegator duties. Bind it with `agents.lead` in `roles.json` (see `examples/roles.lead.json`); `role_bind.py` rejects mixing it with `manager`/`delegator` and still forbids any other doubled-up role. The Lead never implements or acts as Worker, Verifier or Critic; the human approves the plan before any worker starts and gives final acceptance. Installing the `lead` role also installs `herdr-manager` and `herdr-delegator`, which it builds on.
+- **Install with any AI CLI:** [`INSTALL-FOR-AI.md`](INSTALL-FOR-AI.md) is a step-by-step guide an AI agent follows to install the pack for itself (find its skills folder, preview, install, verify, report back), with fallbacks for no Node.js and for tools without a skills feature. The README has a copy-paste prompt for it.
+- **`--target-dir <dir>`** in `bin/install.js` installs into any skills folder, for CLIs other than Claude, Codex and Agy.
+
+### Changed
+- **Any CLI can hold a role.** `tools/role_bind.py` accepts any well-formed agent `kind` with a warning (shown on the console and in `ROSTER.md`); Claude, Codex and Agy keep their existing role rules.
+- **The Critic model is a recommendation.** `claude-sonnet-5-5` stays the default for a Claude Critic, and another model only produces a warning; a Codex or Agy Critic is allowed.
+- Skills label model names as defaults and Codex-specific rules as Codex-only, and state which rules apply to every CLI.
 
 ### Fixed
 - Installers write the real pack version (from `manifest.json`) into each managed skill's marker instead of a hardcoded `v2.8`.

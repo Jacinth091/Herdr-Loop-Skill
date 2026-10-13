@@ -1,11 +1,11 @@
 ---
 name: herdr-critic
-description: Act as an independent, read-only Claude Sonnet 5.5 Critic in a Herdr engineering run. Use when a named Herdr Critic agent is assigned to challenge an accepted plan, worker report, integration diff, risk assumptions, or proposed acceptance. Produce a concise, evidence-linked Markdown critique for the Delegator and Manager without implementing, spawning agents, or running tests. Require a separate Herdr pane, role handshake, and CRITIQUE_START before reviewing.
+description: Act as an independent, read-only Critic (Claude Sonnet 5.5 by default) in a Herdr engineering run. Use when a named Herdr Critic agent is assigned to challenge an accepted plan, worker report, integration diff, risk assumptions, or proposed acceptance. Produce a concise, evidence-linked Markdown critique for the Delegator and Manager without implementing, spawning agents, or running tests. Require a separate Herdr pane, role handshake, and CRITIQUE_START before reviewing.
 ---
 
 # Herdr Critic: independent challenge, not another manager
 
-Read the explicit role packet and [Signal and Receipt Contract](references/signals.md). Confirm the assigned model is **Claude Sonnet 5.5 (`claude-sonnet-5-5`)** in the live Claude Code session, as required for the Critic role. Default to one persistent named Herdr Critic pane; no Codex internal subagents or Claude in-process subagents. A Critic does not consume an implementation worker slot, but must respect the low-RAM budget and pause during heavy local verification if asked.
+Read the explicit role packet and [Signal and Receipt Contract](references/signals.md). Confirm your live model matches the one your role packet assigns. **Claude Sonnet 5.5 (`claude-sonnet-5-5`)** is the recommended default for a Claude Critic; another CLI or model can serve when the human assigns it, and the read-only boundaries below apply unchanged. Default to one persistent named Herdr Critic pane; no Codex internal subagents or Claude in-process subagents. A Critic does not consume an implementation worker slot, but must respect the low-RAM budget and pause during heavy local verification if asked.
 
 ## Mandatory readiness and authorization
 
@@ -30,4 +30,4 @@ Prefer the exact candidate, accepted plan and relevant diffs, not the full imple
 
 Write `critiques/<review-id>.md` following [Critique Format](references/critique-format.md) in the run's allowed scratch/report directory (never overwrite a human-owned file). Include run, review ID, plan revision, exact inspected SHA(s), scope, each finding's severity/evidence/impact/smallest correction, unknowns, and `CRITIQUE: FINDINGS | NO_BLOCKING_FINDINGS | INCOMPLETE | BLOCKED`. The review is advisory, not a verification result. After the file is durable, send one `CRITIQUE_READY <run> <review-id> <path> <fixed-point-sha>` to the Delegator using `herdr agent prompt`. A submitted prompt is not a receipt; follow the recovery contract for transport failures.
 
-Use [Model Routing](references/model-routing.md) to confirm the Critic is a real independently launched Herdr Claude process, not a subagent. The Critic is never the model-override spawn owner for Codex workers.
+Use [Model Routing](references/model-routing.md) to confirm the Critic is a real independently launched Herdr agent process, not a subagent. The Critic is never the model-override spawn owner for Codex workers.

@@ -155,9 +155,30 @@ class RolePackTests(unittest.TestCase):
         self.save()
         self.assertNotEqual(self.bind().returncode, 0)
         self.config["run_id"] = "okay"
-        self.config["agents"]["workers"][0]["kind"] = "python-runner"
+        self.config["agents"]["workers"][0]["kind"] = "../runner"
         self.save()
         self.assertNotEqual(self.bind().returncode, 0)
+
+    def test_unknown_agent_kind_binds_with_warning(self):
+        self.config["agents"]["workers"][0]["kind"] = "gemini"
+        self.save()
+        result = self.bind()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("WARNING Agent worker_t01 uses unverified kind 'gemini'", result.stderr)
+        run_dir = self.repo / ".herdr-loop" / "feature-example"
+        self.assertIn("## Warnings", (run_dir / "ROSTER.md").read_text(encoding="utf8"))
+        worker = next(a for a in json.loads((run_dir / "ACTIVATION.json").read_text(encoding="utf8"))["agents"] if a["role"] == "worker")
+        self.assertIn("Activate the herdr-worker skill (load its SKILL.md)", worker["prompt"])
+        self.assertIn("NO tests", worker["prompt"])
+        self.assertNotIn("CODEX HARD RULE", worker["prompt"])
+        self.assertEqual(worker["model"], "")
+
+    def test_known_kinds_keep_their_role_rules(self):
+        self.config["agents"]["manager"]["kind"] = "agy"
+        self.save()
+        result = self.bind()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("not supported for role manager", result.stderr)
 
     def test_parallel_budget_requires_explicit_authorization(self):
         for count in (2, 3):
@@ -467,9 +488,21 @@ class RolePackTests(unittest.TestCase):
         self.assertNotEqual(failure.returncode, 0)
         self.assertIn("reasoning_effort", failure.stderr)
         self.config["agents"]["workers"][0]["reasoning_effort"] = "xhigh"
-        self.config["agents"]["critic"]["kind"] = "codex"
         self.save()
-        self.assertNotEqual(self.bind().returncode, 0)
+        self.assertEqual(self.bind().returncode, 0)
+
+    def test_critic_model_is_a_recommendation(self):
+        self.config["agents"]["critic"]["model"] = "claude-opus-5-5"
+        self.save()
+        result = self.bind("--force")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("claude-sonnet-5-5 is the recommended Claude critic model", result.stderr)
+        self.config["agents"]["critic"] = {"name": "critic_t01", "kind": "codex"}
+        self.save()
+        result = self.bind("--force")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        critic = next(a for a in json.loads((self.repo / ".herdr-loop" / "feature-example" / "ACTIVATION.json").read_text(encoding="utf8"))["agents"] if a["role"] == "critic")
+        self.assertEqual(critic["model"], "")
 
     def test_critic_can_be_optional_without_breaking_legacy_configs(self):
         self.config["agents"].pop("critic")

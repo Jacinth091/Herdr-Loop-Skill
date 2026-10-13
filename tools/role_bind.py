@@ -15,14 +15,17 @@ SKILLS = {
     "manager": "herdr-manager", "delegator": "herdr-delegator", "lead": "herdr-lead",
     "worker": "herdr-worker", "verifier": "herdr-verifier", "critic": "herdr-critic",
 }
+# Role rules for the three CLIs this pack knows. Any other agent kind is accepted in
+# any role with a warning: its CLI-specific behavior (launch flags, skill syntax) is unverified.
 KINDS = {
     "manager": {"claude", "codex"},
     "delegator": {"claude", "codex"},
     "lead": {"claude", "codex"},
     "worker": {"agy", "codex", "claude"},
     "verifier": {"claude", "codex", "agy"},
-    "critic": {"claude"},
+    "critic": {"claude", "codex", "agy"},
 }
+KNOWN_KINDS = {"claude", "codex", "agy"}
 NAME = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 RUN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")
 MODEL_ID = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$")
@@ -52,12 +55,12 @@ def spawn_owner(role, agent, config):
     return owner
 
 
-def resolve_preference(role, data):
+def resolve_preference(role, data, warnings):
     kind = data["kind"]
     preference = PREFERENCES.get("codex_worker" if role == "worker" and kind == "codex" else
                                  "claude_worker" if role == "worker" and kind == "claude" else
                                  "claude_verifier" if role == "verifier" and kind == "claude" else
-                                 "critic" if role == "critic" else "")
+                                 "critic" if role == "critic" and kind == "claude" else "")
     model = data.get("model", preference[0] if preference else "")
     effort = data.get("reasoning_effort", preference[1] if preference else "") or ""
     if model and (not isinstance(model, str) or not MODEL_ID.fullmatch(model)):
@@ -67,8 +70,8 @@ def resolve_preference(role, data):
             raise ValueError("Codex worker reasoning_effort must be xhigh or max")
     elif effort:
         raise ValueError("reasoning_effort is supported here only on Codex Workers")
-    if role == "critic" and model != "claude-sonnet-5-5":
-        raise ValueError("Herdr Critic must use claude-sonnet-5-5 unless the skill is deliberately revised")
+    if role == "critic" and kind == "claude" and model != "claude-sonnet-5-5":
+        warnings.append(f"Critic {data['name']} uses {model}; claude-sonnet-5-5 is the recommended Claude critic model")
     return model, effort
 
 
@@ -125,6 +128,7 @@ def read_and_validate(config_path, override_run=None):
         flattened.append(("critic", critic))
     seen = set()
     seen_attempts = set()
+    warnings = []
     for role, data in flattened:
         if not isinstance(data, dict):
             raise ValueError("Each agent must be an object")
@@ -135,7 +139,12 @@ def read_and_validate(config_path, override_run=None):
         if name in seen:
             raise ValueError("Agent assigned more than one role: " + name)
         seen.add(name)
-        if kind not in KINDS[role]:
+        if not isinstance(kind, str) or not NAME.fullmatch(kind):
+            raise ValueError(f"Agent {name}: kind must be a CLI name like claude, codex, agy or another lowercase slug")
+        if kind not in KNOWN_KINDS:
+            warnings.append(f"Agent {name} uses unverified kind {kind!r}: confirm `herdr agent start --kind {kind}` works "
+                            "and that this CLI loads SKILL.md skills (see INSTALL-FOR-AI.md)")
+        elif kind not in KINDS[role]:
             raise ValueError(f"Agent {name}: {kind!r} is not supported for role {role}")
         for key in ("pane_id", "workspace_id", "worktree"):
             if key in data and not isinstance(data[key], str):
@@ -167,17 +176,20 @@ def read_and_validate(config_path, override_run=None):
                 raise ValueError(f"Worker {name}: task_title and task_outcome must be provided together")
             data["_task_title"] = title.strip()
             data["_task_outcome"] = outcome.strip()
-        model, effort = resolve_preference(role, data)
+        model, effort = resolve_preference(role, data, warnings)
         data["_resolved_model"] = model
         data["_resolved_effort"] = effort
     if len(roles.get("workers", [])) > budget:
         # Workers may be assigned but not active. Assignment != concurrency.
         pass
     config["run_id"] = run_id
+    config["_warnings"] = warnings
     return config, flattened
 
 
 def skill_cmd(kind, skill):
+    if kind not in KNOWN_KINDS:
+        return f"the {skill} skill (load its SKILL.md)"
     return ("$" if kind == "codex" else "/") + skill
 
 
@@ -383,6 +395,8 @@ def render_roster(config, flattened, repo, run_dir):
                f"Signal roles: Manager -> {config['agents']['delegator']['name']}; Delegator -> {config['agents']['manager']['name']}; Workers/Verifier/Critic -> {config['agents']['delegator']['name']}."),
               "Worker must write READY.md and signal ROLE_READY; Delegator logs observed receipt before sending TASK_START. Verifier requires VERIFY_START + serial lock.",
               "Prompt submission is not proof of receipt; record blockers and do not auto-elevate on access denied.", ""]
+    if config.get("_warnings"):
+        lines += ["## Warnings", ""] + ["- " + w for w in config["_warnings"]] + [""]
     return "\n".join(lines)
 
 
@@ -467,6 +481,8 @@ def main(argv=None):
         if not repo.is_dir():
             raise ValueError("--repo must refer to an existing directory")
         config, agents = read_and_validate(args.config, args.run_id)
+        for warning in config["_warnings"]:
+            print("WARNING", warning, file=sys.stderr)
         run_dir = repo / ".herdr-loop" / config["run_id"]
         if run_dir.is_symlink():
             raise RuntimeError("Refusing symlink run directory")

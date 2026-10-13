@@ -55,7 +55,7 @@ When the Codex Delegator sends `SPAWN_REQUEST <run> <task> <request-path>`, insp
 
 Use an optional separate Claude Haiku 5.5 `herdr-verifier` as the **dedicated tester** for approved serial verification, or let the Delegator handle trivial checks. This is the Verifier role, not a Worker, and it must hold the exclusive lock before tests. The Manager sets acceptance requirements but does not run tests.
 
-Use the optional independent `herdr-critic` role (Claude Sonnet 5.5) for bounded read-only challenge of plan or integration. The Critic reports `CRITIQUE_READY` to the Delegator, who routes findings to you for a decision. Critic findings do not themselves grant approval.
+Use the optional independent `herdr-critic` role (Claude Sonnet 5.5 by default) for bounded read-only challenge of plan or integration. The Critic reports `CRITIQUE_READY` to the Delegator, who routes findings to you for a decision. Critic findings do not themselves grant approval.
 
 ## Required outputs
 

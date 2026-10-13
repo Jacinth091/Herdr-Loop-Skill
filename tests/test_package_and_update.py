@@ -11,6 +11,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -191,6 +192,37 @@ class PackageAndUpdateTests(unittest.TestCase):
         self.fake_release(good_sums=True)
         self.assertEqual(self.run_update(), 0)
         self.installer.assert_called_once()
+
+    @unittest.skipUnless(shutil.which("node"), "node not installed")
+    def test_node_installer_target_dir_installs_and_uninstalls_anywhere(self):
+        target = self.temp_dir / "some-other-ai" / "skills"
+        node = ["node", str(ROOT / "bin" / "install.js"), "--target-dir", str(target)]
+        subprocess.run(node + ["--roles", "controller,lead"], check=True, capture_output=True)
+        self.assertEqual(sorted(p.name for p in target.iterdir()),
+                         ["herdr-delegator", "herdr-engineering-loop", "herdr-lead", "herdr-manager"])
+        foreign = target / "herdr-worker"
+        foreign.mkdir()
+        (foreign / "mine.txt").write_text("not the pack's", encoding="utf-8")
+        res = subprocess.run(node + ["--roles", "worker"], capture_output=True, text=True)
+        self.assertNotEqual(res.returncode, 0)
+        self.assertEqual((foreign / "mine.txt").read_text(encoding="utf-8"), "not the pack's")
+        subprocess.run(node + ["--uninstall"], check=True, capture_output=True)
+        self.assertEqual([p.name for p in target.iterdir()], ["herdr-worker"])
+        res = subprocess.run(node + ["--agents", "claude"], capture_output=True, text=True)
+        self.assertEqual(res.returncode, 2)
+
+    def test_ai_install_guide_only_uses_real_installer_flags(self):
+        guide = (ROOT / "INSTALL-FOR-AI.md").read_text(encoding="utf-8")
+        installer = (ROOT / "bin" / "install.js").read_text(encoding="utf-8")
+        # Installer commands are the npx lines and the option tables; other flags belong to herdr/node.
+        installer_lines = "\n".join(l for l in guide.splitlines() if "npx " in l or l.startswith("|"))
+        flags = set(re.findall(r"(?<![\w-])(--[a-z][a-z-]+)", installer_lines))
+        self.assertTrue({"--target-dir", "--dry-run", "--force", "--agents", "--uninstall"} <= flags, flags)
+        for flag in flags:
+            self.assertTrue(f"'{flag}'" in installer, f"INSTALL-FOR-AI.md uses {flag}, which bin/install.js does not accept")
+        for role in re.findall(r"`(controller,[a-z,]+)`", guide):
+            for name in role.split(","):
+                self.assertIn(f"{name}:", installer.replace("'", ""), name)
 
     @unittest.skipUnless(shutil.which("node"), "node not installed")
     def test_node_installer_marks_manifest_version(self):

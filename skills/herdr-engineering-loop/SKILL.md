@@ -15,8 +15,8 @@ The Session Controller provisions the Herdr environment, binds individual agents
 
 Every Herdr engineering run must maintain these essential safety rules:
 
-1. **The Codex Subagent Ban:**  
-   Never use Codex's native `spawn_agent`, internal subagents, agent teams, or background child threads. All agents must be registered inside explicit Herdr workspaces and panes (`herdr agent start`). If Herdr is unavailable, report `BLOCKED: HERDR_WORKER_UNAVAILABLE`.
+1. **The Subagent Ban (every CLI; Codex's `spawn_agent` is the common case):**  
+   Never use Codex's native `spawn_agent`, any CLI's internal subagents, agent teams, or background child threads. All agents must be registered inside explicit Herdr workspaces and panes (`herdr agent start`). If Herdr is unavailable, report `BLOCKED: HERDR_WORKER_UNAVAILABLE`.
 2. **Worker Origin & Workspace Invariants:**  
    A code Worker exists only when the Delegator provisions a Git worktree and Herdr workspace/pane, arranges launch through the authorized owner, and confirms registration. A human-approved `non-code-isolated-copy` exception still requires a separately registered Herdr agent and pane, but no Git worktree or fabricated commit.
 3. **Worker Test-Execution Ban:**  
@@ -104,6 +104,8 @@ To configure and bind roles for a run:
 ## 6. Model-Aware Launch Routing
 
 Read [Model Routing](references/model-routing.md) before launching any worker, verifier, or critic.
+
+**Other AI CLIs.** The model names in this pack (Haiku, Sonnet, `gpt-6-luna`) are defaults for Claude, Codex and Agy, not requirements. Any CLI that Herdr can start and that loads `SKILL.md` skills can hold a role; `tools/role_bind.py` accepts its kind with a warning. Rules that name Codex (the override-launch table below, `spawn_agent`) apply only to Codex. These apply to **every** CLI: each agent is a named Herdr agent in its own pane, never an in-process subagent; Workers never run tests; and every role stays inside its own skill.
 
 Due to CLI environment restrictions, a **Codex Delegator cannot launch a model-overridden Codex CLI worker** (`-m gpt-6-luna -c model_reasoning_effort='"xhigh"'`). Follow this dispatch table:
 
