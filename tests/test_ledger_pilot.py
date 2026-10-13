@@ -7,12 +7,17 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
+import sqlite3
+from contextlib import closing
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / 'skills' / 'herdr-engineering-loop' / 'scripts' / 'herdr_ledger.py'
 spec = importlib.util.spec_from_file_location('herdr_ledger_pilot', CLI)
 ledger = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ledger)
+REAL_OBSERVER = ledger.observe_herdr
+REAL_STOPPED = ledger.observe_stopped
 
 
 def shell(*args, cwd=None):
@@ -23,6 +28,20 @@ class LedgerPilotTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
+        observation = mock.patch.object(ledger, 'observe_herdr', return_value={
+            'agent': 'worker_a1', 'pane': 'w3:p1', 'terminal': 'term-test', 'pid': 1234,
+            'model': 'gpt-6-luna', 'effort': 'xhigh'})
+        observation.start()
+        self.addCleanup(observation.stop)
+        stopped = mock.patch.object(ledger, 'observe_stopped', return_value='Herdr pane=w3:p1 pid=1234 absent')
+        stopped.start()
+        self.addCleanup(stopped.stop)
+        recipient = mock.patch.object(ledger, 'observe_recipient')
+        recipient.start()
+        self.addCleanup(recipient.stop)
+        unstarted = mock.patch.object(ledger, 'observe_unstarted', return_value='Herdr agent=worker_a1 absent')
+        unstarted.start()
+        self.addCleanup(unstarted.stop)
         self.root = Path(self.temp.name)
         self.repo = self.root / 'checkout'
         self.repo.mkdir()
@@ -40,6 +59,18 @@ class LedgerPilotTests(unittest.TestCase):
         (self.run_dir / 'REPORT.md').write_text('Behavior changed; independent tests pending.\n', encoding='utf8')
         (self.run_dir / 'VERIFY.log').write_text('1 test passed\n', encoding='utf8')
         (self.run_dir / 'MANAGER.txt').write_text('Manager reviewed verified candidate\n', encoding='utf8')
+        (self.run_dir / 'READY.md').write_text(
+            'attempt=T01-A1\nagent=worker_a1\npane=w3:p1\nobserved_model=gpt-6-luna\nobserved_effort=xhigh\n', encoding='utf8')
+        (self.run_dir / 'TASK-ACK.md').write_text(
+            'attempt=T01-A1\nevent=start1\nagent=worker_a1\npane=w3:p1\nplan_sha=' +
+            hashlib.sha256((self.run_dir/'PLAN.md').read_bytes()).hexdigest() + '\n',encoding='utf8')
+
+    def receipt(self, kind, event, evidence, sender, pane, recipient):
+        digest = hashlib.sha256((self.run_dir / evidence).read_bytes()).hexdigest()
+        name = f'{event}.receipt'
+        (self.run_dir / name).write_text(
+            f'{kind} sample T01-A1 {event} {sender} {pane} {recipient}\nevidence_sha={digest}\n', encoding='utf8')
+        return name
 
     def commit(self, content, checkout=None):
         checkout = checkout or self.repo
@@ -72,13 +103,22 @@ class LedgerPilotTests(unittest.TestCase):
                         '--provider', 'codex', '--expected-model', 'gpt-6-luna', '--expected-effort', 'xhigh', '--request-id', request, ok=ok)
 
     def attach(self):
-        return self.cmd('attempt-attach', '--attempt', 'T01-A1', '--pane', 'w3:p1',
-                        '--agent', 'worker_a1', '--model', 'gpt-6-luna', '--effort', 'xhigh', '--request-id', 'attach1')
+        result = self.cmd('attempt-attach', '--attempt', 'T01-A1', '--pane', 'w3:p1',
+                          '--agent', 'worker_a1', '--request-id', 'attach1')
+        ready = self.receipt('ROLE_READY', 'ready1', 'READY.md', 'worker_a1', 'w3:p1', 'delegator')
+        self.cmd('attempt-ready', '--attempt', 'T01-A1', '--operator', 'delegator', '--operator-pane','w1:p1','--event-id', 'ready1',
+                 '--evidence', 'READY.md', '--receipt', ready, '--request-id', 'record-ready1')
+        start = self.receipt('TASK_START', 'start1', 'TASK-ACK.md', 'delegator', 'w1:p1', 'worker_a1')
+        self.cmd('attempt-start', '--attempt', 'T01-A1', '--operator', 'delegator', '--operator-pane','w1:p1','--sender-pane', 'w1:p1',
+                 '--event-id', 'start1', '--evidence', 'TASK-ACK.md', '--receipt', start, '--request-id', 'record-start1')
+        return result
 
     def report(self, request='report1', evidence='REPORT.md', ok=True):
         head = shell('git', '-C', str(self.worker), 'rev-parse', 'HEAD').stdout.strip()
+        receipt = self.receipt('REPORT_READY', 'report-event1', evidence, 'worker_a1', 'w3:p1', 'delegator')
         return self.cmd('attempt-report', '--attempt', 'T01-A1', '--source-sha', head,
-                        '--evidence', evidence, '--request-id', request, ok=ok)
+                        '--evidence', evidence, '--event-id', 'report-event1', '--recipient', 'delegator',
+                        '--receipt', receipt, '--request-id', request, ok=ok)
 
     def reported(self):
         self.init();self.task();self.reserve();self.attach();self.report()
@@ -98,6 +138,11 @@ class LedgerPilotTests(unittest.TestCase):
         self.cmd('verify-start', '--verification', 'V01', '--candidate', 'C01',
                  '--verifier', 'haiku_verify', '--request-id', 'verify1')
 
+    def approve(self):
+        return self.cmd('decision-record','--decision-id','D01','--subject','C01','--authority','MANAGER',
+                        '--actor','manager','--attestor','delegator','--disposition','APPROVED',
+                        '--provenance','observed-manager-receipt','--rationale','MANAGER.txt','--request-id','decision1')
+
     def test_dependency_tracer_to_exact_candidate_acceptance(self):
         self.init();self.task();self.task('T02', 'T01', 'Add recovery message')
         self.assertIn('T01', self.cmd('next'))
@@ -114,8 +159,10 @@ class LedgerPilotTests(unittest.TestCase):
              cwd=str(self.repo), capture_output=True, text=True)
         self.assertEqual(check.returncode, 0, check.stderr)
         (self.run_dir/'VERIFY.log').write_text(check.stdout, encoding='utf8')
-        self.assertIn('PASS', self.cmd('verify-record', '--verification', 'V01', '--result', 'PASS', '--exit-code', '0', '--evidence', 'VERIFY.log', '--request-id', 'verified1'))
-        self.assertIn('ACCEPTED', self.cmd('task-accept', '--task', 'T01', '--candidate', 'C01', '--decision', 'MANAGER.txt', '--request-id', 'accept1'))
+        self.assertIn('PASS', self.cmd('verify-exec', '--verification', 'V01', '--request-id', 'verified1', '--',
+                                   sys.executable, '-c', "assert open('code.txt').read().strip() == 'implemented worker patch'"))
+        self.approve()
+        self.assertIn('ACCEPTED', self.cmd('task-accept', '--task', 'T01', '--candidate', 'C01', '--decision-id', 'D01', '--request-id', 'accept1'))
         self.assertIn('T02', self.cmd('next'))
         view=self.cmd('status', '--human')
         self.assertIn('Prevent duplicate writes', view)
@@ -146,10 +193,11 @@ class LedgerPilotTests(unittest.TestCase):
     def test_wrong_agent_and_state_do_not_advance(self):
         self.init();self.task();self.reserve()
         self.assertIn('unexpected Herdr agent', self.cmd('attempt-attach','--attempt','T01-A1',
-            '--pane','w9:p9','--agent','wrong','--model','gpt-6-luna','--request-id','bad',ok=False))
+            '--pane','w9:p9','--agent','wrong','--request-id','bad',ok=False))
         self.assertIn('RESERVED', self.cmd('recover'))
         self.assertIn('not STARTED', self.report(ok=False))
-        self.assertIn('MODEL_OVERRIDE_NOT_APPLIED', self.cmd('attempt-attach','--attempt','T01-A1','--pane','w3:p1','--agent','worker_a1','--model','gpt-6-luna','--effort','max','--request-id','bad-effort',ok=False))
+        with mock.patch.object(ledger, 'observe_herdr', return_value={'agent':'worker_a1','pane':'w3:p1','terminal':'term-test','pid':1234,'model':'gpt-6-luna','effort':'max'}):
+            self.assertIn('MODEL_OVERRIDE_NOT_APPLIED', self.cmd('attempt-attach','--attempt','T01-A1','--pane','w3:p1','--agent','worker_a1','--request-id','bad-effort',ok=False))
 
     def test_candidate_checkout_dirty_fails(self):
         self.reported()
@@ -162,28 +210,63 @@ class LedgerPilotTests(unittest.TestCase):
         self.commit('changed after frozen candidate')
         self.assertIn('STALE', self.cmd('verify-record','--verification','V01','--result','PASS',
                                       '--exit-code','0','--evidence','VERIFY.log','--request-id','record1'))
-        error=self.cmd('task-accept','--task','T01','--candidate','C01','--decision','MANAGER.txt','--request-id','accept1',ok=False)
-        self.assertIn('mismatch', error)
+        error=self.cmd('task-accept','--task','T01','--candidate','C01','--decision-id','D01','--request-id','accept1',ok=False)
+        self.assertIn('candidate changed', error)
 
     def test_evidence_modified_after_pass_blocks_acceptance(self):
         self.verifying()
-        self.cmd('verify-record','--verification','V01','--result','PASS',
-                 '--exit-code','0','--evidence','VERIFY.log','--request-id','pass1')
-        (self.run_dir/'VERIFY.log').write_text('tampered after PASS', encoding='utf8')
+        self.cmd('verify-exec','--verification','V01','--request-id','pass1','--',sys.executable,'-c','print("pass")')
+        self.approve()
+        (self.run_dir/'verifications/V01.log').write_text('tampered after PASS', encoding='utf8')
         self.assertIn('verification evidence changed',self.cmd('task-accept',
-            '--task','T01','--candidate','C01','--decision','MANAGER.txt',
+            '--task','T01','--candidate','C01','--decision-id','D01',
             '--request-id','accept1',ok=False))
+
+    def test_changed_ready_receipt_blocks_acceptance(self):
+        self.verifying()
+        self.cmd('verify-exec','--verification','V01','--request-id','pass1','--',sys.executable,'-c','print("pass")')
+        self.approve()
+        (self.run_dir/'ready1.receipt').write_text('tampered receipt',encoding='utf8')
+        self.assertIn('attempt signal evidence changed',self.cmd('task-accept','--task','T01',
+            '--candidate','C01','--decision-id','D01','--request-id','accept-tampered',ok=False))
 
     def test_test_failure_cannot_record_pass(self):
         self.verifying()
-        self.assertIn('requires exit code 0', self.cmd('verify-record','--verification','V01',
+        self.assertIn('requires verify-exec', self.cmd('verify-record','--verification','V01',
             '--result','PASS','--exit-code','1','--evidence','VERIFY.log','--request-id','record1',ok=False))
         self.assertIn('lock-held', self.cmd('recover'))
+
+    def test_captured_nonzero_verification_is_fail(self):
+        self.verifying()
+        result=self.cmd('verify-exec','--verification','V01','--request-id','failed-check','--',
+                        sys.executable,'-c','import sys; sys.exit(7)')
+        self.assertIn('result=FAIL',result)
+        with closing(sqlite3.connect(self.run_dir/'ledger.sqlite')) as db:
+            self.assertEqual(7,db.execute("SELECT exit_code FROM verification WHERE id='V01'").fetchone()[0])
+            self.assertEqual(0,db.execute("SELECT active FROM claim WHERE resource='heavy-local-verification'").fetchone()[0])
+
+    def test_interrupted_verification_holds_global_lock(self):
+        self.verifying()
+        real_run=ledger.subprocess.run
+        def interrupted(argv,*args,**kwargs):
+            if argv and argv[0]==sys.executable:
+                raise OSError('simulated launch ambiguity')
+            return real_run(argv,*args,**kwargs)
+        with mock.patch.object(ledger.subprocess,'run',side_effect=interrupted):
+            with self.assertRaisesRegex(OSError,'simulated launch ambiguity'):
+                self.cmd('verify-exec','--verification','V01','--request-id','interrupted','--',
+                         sys.executable,'-c','print("pass")')
+        self.assertIn('lock-held',self.cmd('recover'))
+        self.assertIn('requires process reconciliation',self.cmd('verify-abort','--verification','V01',
+            '--reason','uncertain process','--request-id','abort1',ok=False))
+        with closing(sqlite3.connect(self.run_dir/'ledger.sqlite')) as db:
+            self.assertEqual('RUNNING',db.execute("SELECT state FROM verification WHERE id='V01'").fetchone()[0])
+            self.assertEqual(1,db.execute("SELECT active FROM claim WHERE resource='heavy-local-verification'").fetchone()[0])
 
     def test_unauthorized_evidence_path_rejected(self):
         self.init(); self.task()
         self.assertIn('relative path',self.cmd('attempt-report','--attempt','T01-A1',
-            '--source-sha','0'*40,'--evidence','../PLAN.md','--request-id','r1',ok=False))
+            '--source-sha','0'*40,'--evidence','../PLAN.md','--event-id','report1','--recipient','delegator','--receipt','REPORT.md','--request-id','r1',ok=False))
         outside=self.root/'outside.md';outside.write_text('secret',encoding='utf8')
         try:
             (self.run_dir/'link.md').symlink_to(outside)
@@ -245,6 +328,143 @@ class LedgerPilotTests(unittest.TestCase):
         before=hashlib.sha256(db.read_bytes()).hexdigest()
         self.cmd('status');self.cmd('next');self.cmd('recover')
         self.assertEqual(before,hashlib.sha256(db.read_bytes()).hexdigest())
+
+    def test_asserted_attach_cannot_skip_herdr_observation_or_ready(self):
+        self.init();self.task();self.reserve()
+        with mock.patch.object(ledger, 'observe_herdr', side_effect=ledger.LedgerError('BLOCKED: HERDR_TRANSPORT_UNAVAILABLE')):
+            self.assertIn('HERDR_TRANSPORT_UNAVAILABLE', self.cmd('attempt-attach','--attempt','T01-A1',
+                '--pane','w3:p1','--agent','worker_a1','--request-id','attach-denied',ok=False))
+        self.cmd('attempt-attach','--attempt','T01-A1','--pane','w3:p1','--agent','worker_a1','--request-id','attach1')
+        self.assertIn('not READY',self.cmd('attempt-start','--attempt','T01-A1','--operator','delegator',
+            '--operator-pane','w1:p1','--sender-pane','w1:p1','--event-id','start1','--evidence','TASK-ACK.md',
+            '--receipt',self.receipt('TASK_START','start1','TASK-ACK.md','delegator','w1:p1','worker_a1'),
+            '--request-id','early-start',ok=False))
+        self.assertIn('OBSERVED',self.cmd('recover'))
+
+    def test_observer_checks_actual_agent_pane_process_and_model_flags(self):
+        agent={'agent':{'name':'worker_a1','pane_id':'w3:p1','cwd':str(self.worker),'terminal_id':'term-test'}}
+        process={'process_info':{'pane_id':'w3:p1','foreground_processes':[{'name':'codex.exe','pid':1234,
+            'cwd':str(self.worker),'argv':['codex.exe','-m','gpt-6-luna','-c','model_reasoning_effort="xhigh"']}]}}
+        with mock.patch.object(ledger,'herdr_json',side_effect=[agent,process]):
+            self.assertEqual('xhigh',REAL_OBSERVER('worker_a1','w3:p1',self.worker,'codex')['effort'])
+        agent['agent']['pane_id']='wrong'
+        with mock.patch.object(ledger,'herdr_json',side_effect=[agent,process]):
+            with self.assertRaisesRegex(ledger.LedgerError,'HERDR_IDENTITY_MISMATCH'):
+                REAL_OBSERVER('worker_a1','w3:p1',self.worker,'codex')
+
+    def test_observer_checks_stopped_or_closed_pane(self):
+        with mock.patch.object(ledger, 'herdr_json', return_value={'panes': [{'pane_id': 'w1:p1'}]}):
+            msg = REAL_STOPPED('w3:p1', 1234)
+            self.assertIn('closed and pid=1234 absent', msg)
+        panes = {'panes': [{'pane_id': 'w3:p1'}]}
+        process = {'process_info': {'pane_id': 'w3:p1', 'foreground_processes': [{'pid': 1234}]}}
+        with mock.patch.object(ledger, 'herdr_json', side_effect=[panes, process]):
+            with self.assertRaisesRegex(ledger.LedgerError, 'UNCERTAIN: observed agent process still present'):
+                REAL_STOPPED('w3:p1', 1234)
+        process_idle = {'process_info': {'pane_id': 'w3:p1', 'foreground_processes': [{'pid': 5678}]}}
+        with mock.patch.object(ledger, 'herdr_json', side_effect=[panes, process_idle]):
+            msg = REAL_STOPPED('w3:p1', 1234)
+            self.assertIn('Herdr pane=w3:p1 pid=1234 absent', msg)
+
+    def test_global_heavy_lock_blocks_another_checkout(self):
+        self.frozen()
+        other=self.root/'integration-two'
+        shell('git','-C',str(self.repo),'worktree','add','-q','-b','integration-two',str(other),'HEAD')
+        self.cmd('candidate-freeze','--task','T01','--candidate','C02','--checkout',str(other),'--request-id','freeze2')
+        self.cmd('verify-start','--verification','V01','--candidate','C01','--verifier','haiku','--request-id','verify1')
+        error=self.cmd('verify-start','--verification','V02','--candidate','C02','--verifier','haiku2','--request-id','verify2',ok=False)
+        self.assertIn('resource already claimed',error)
+        with closing(sqlite3.connect(self.run_dir/'ledger.sqlite')) as db:
+            self.assertEqual(1,db.execute("SELECT COUNT(*) FROM claim WHERE resource='heavy-local-verification' AND active=1").fetchone()[0])
+
+    def test_unrelated_clean_candidate_rejected(self):
+        self.reported()
+        self.assertIn('does not contain reported source patch',self.cmd('candidate-freeze','--task','T01',
+            '--candidate','C01','--checkout',str(self.repo),'--request-id','wrong-freeze',ok=False))
+
+    def test_open_high_finding_blocks_acceptance_until_resolved(self):
+        self.frozen()
+        (self.run_dir/'CRITIQUE.md').write_text('Important issue in edge case\n',encoding='utf8')
+        self.cmd('critique-record','--review','R01','--candidate','C01','--critic','sonnet_critic',
+                 '--report','CRITIQUE.md','--request-id','review1')
+        self.cmd('finding-record','--finding','F01','--review','R01','--actor','sonnet_critic','--severity','HIGH',
+                 '--disposition','OPEN','--evidence','CRITIQUE.md','--request-id','finding1')
+        self.cmd('verify-start','--verification','V01','--candidate','C01','--verifier','haiku',
+                 '--request-id','verify1')
+        self.cmd('verify-exec','--verification','V01','--request-id','verify-run1','--',sys.executable,'-c','print("pass")')
+        self.approve()
+        self.assertIn('unresolved blocking',self.cmd('task-accept','--task','T01','--candidate','C01',
+            '--decision-id','D01','--request-id','blocked-accept',ok=False))
+        self.cmd('finding-record','--finding','F01','--review','R01','--actor','sonnet_critic','--severity','HIGH',
+                 '--disposition','RESOLVED','--evidence','CRITIQUE.md','--request-id','finding2')
+        self.assertIn('ACCEPTED',self.cmd('task-accept','--task','T01','--candidate','C01',
+            '--decision-id','D01','--request-id','accepted'))
+
+    def test_cancellation_fences_dispatch_and_waits_for_claims(self):
+        self.init();self.task();self.reserve()
+        (self.run_dir/'CANCEL.md').write_text('Human cancelled this run\n',encoding='utf8')
+        self.cmd('run-cancel','--decision-id','D-CANCEL','--actor','human','--attestor','operator',
+                 '--authority-source','user-request','--reason','CANCEL.md','--request-id','cancel1')
+        self.assertIn('run is not executing',self.reserve(task='T01',attempt='T01-A2',request='reserve2',ok=False))
+        self.assertIn('ownership remains',self.cmd('cancel-finalize','--decision-id','D-CANCEL',
+            '--request-id','finish1',ok=False))
+        self.assertIn('state=CANCELLING',self.cmd('status'))
+        self.cmd('attempt-release','--attempt','T01-A1','--generation','1',
+                 '--observation','confirmed absent','--request-id','release-cancel1')
+        self.assertIn('state=CANCELLED',self.cmd('cancel-finalize','--decision-id','D-CANCEL',
+            '--request-id','finish2'))
+        self.assertEqual('NO_READY_TASK',self.cmd('next'))
+
+    def test_confirmed_stopped_attempt_needs_manager_decision_and_new_id(self):
+        self.init();self.task();self.reserve()
+        self.cmd('attempt-release','--attempt','T01-A1','--generation','1',
+                 '--observation','confirmed absent','--request-id','released1')
+        self.assertIn('task not ready',self.reserve(attempt='T01-A2',request='reserve-early',ok=False))
+        self.assertIn('decision missing',self.cmd('task-retry','--task','T01',
+            '--decision-id','missing','--request-id','retry-early',ok=False))
+        self.cmd('decision-record','--decision-id','D-RETRY','--subject','T01','--authority','MANAGER',
+                 '--actor','manager','--attestor','delegator','--disposition','APPROVED',
+                 '--provenance','observed-manager-retry','--rationale','MANAGER.txt','--request-id','retry-decision')
+        self.assertIn('state=PLANNED',self.cmd('task-retry','--task','T01','--decision-id','D-RETRY',
+            '--request-id','retry1'))
+        self.assertIn('fence=2',self.cmd('attempt-reserve','--task','T01','--attempt','T01-A2',
+            '--checkout',str(self.worker),'--agent','worker_a2','--provider','codex',
+            '--expected-model','gpt-6-luna','--expected-effort','xhigh','--request-id','reserve2'))
+        with closing(sqlite3.connect(self.run_dir/'ledger.sqlite')) as db:
+            self.assertEqual('INTERRUPTED',db.execute("SELECT state FROM attempt WHERE id='T01-A1'").fetchone()[0])
+
+    def test_v1_upgrade_backups_and_quarantines_asserted_attempts(self):
+        db=self.run_dir/'ledger.sqlite'
+        with closing(sqlite3.connect(db)) as conn:
+            conn.executescript((ROOT/'tests/fixtures/ledger_v1.sql').read_text(encoding='utf8'))
+            conn.execute("INSERT INTO run(id,repo,plan_path,plan_sha,grant_ref,max_workers) VALUES(?,?,?,?,?,?)",
+                         ('sample',str(self.repo),'PLAN.md',hashlib.sha256((self.run_dir/'PLAN.md').read_bytes()).hexdigest(),'human',1))
+            conn.execute("INSERT INTO task(id,title,outcome,deps,brief_path,brief_sha) VALUES(?,?,?,?,?,?)",
+                         ('T01','Legacy task','Safe result','[]','TASK.md',hashlib.sha256((self.run_dir/'TASK.md').read_bytes()).hexdigest()))
+            conn.execute("INSERT INTO attempt(id,task_id,kind,agent_hint,checkout,expected_model,expected_effort,state,claim_generation) VALUES(?,?,?,?,?,?,?,?,?)",
+                         ('T01-A1','T01','codex','worker_a1',str(self.worker),'gpt-6-luna','xhigh','STARTED',1))
+            conn.commit()
+        self.assertIn('v1-live-attempts=UNCERTAIN',self.cmd('upgrade'))
+        self.assertTrue((self.run_dir/'ledger.v1.backup.sqlite').exists())
+        self.assertIn('UNCERTAIN',self.cmd('recover'))
+        with closing(sqlite3.connect(self.run_dir/'ledger.v1.backup.sqlite')) as backup:
+            self.assertEqual(1,backup.execute('PRAGMA user_version').fetchone()[0])
+        with closing(sqlite3.connect(db)) as future:
+            future.execute('PRAGMA user_version=99')
+        self.assertIn('schema is not v2',self.cmd('status',ok=False))
+        self.assertIn('unknown ledger schema',self.cmd('upgrade',ok=False))
+
+    def test_progress_and_export_are_read_only_projections(self):
+        self.init();self.task()
+        view=subprocess.run([sys.executable,str(ROOT/'tools/progress_view.py'),'--run-dir',str(self.run_dir)],
+                            capture_output=True,text=True,check=False)
+        self.assertEqual(0,view.returncode,view.stderr)
+        self.assertIn('Prevent duplicate writes',view.stdout)
+        self.assertNotIn('T01',view.stdout)
+        exported=self.cmd('export')
+        self.assertIn('non-authoritative',exported)
+        self.assertIn('Plan SHA-256',exported)
+        self.assertFalse((self.run_dir/'SESSION.md').exists())
 
 
 if __name__ == '__main__':

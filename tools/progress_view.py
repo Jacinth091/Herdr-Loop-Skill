@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render a readable user progress summary from existing SESSION.md (read-only).
+"""Render a readable user progress summary from a Markdown or SQLite run (read-only).
 
 Uses the Delegator ledger as the only source; never queries Git, Herdr or CI.
 Fails if task titles/outcomes have not been recorded, rather than inventing them.
@@ -7,6 +7,7 @@ Fails if task titles/outcomes have not been recorded, rather than inventing them
 import argparse
 import re
 import sys
+import subprocess
 from pathlib import Path
 
 
@@ -110,13 +111,25 @@ def render(content, include_internal_ids=False):
 
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--session", type=Path, required=True, help="Path to Delegator-owned SESSION.md")
+    source=p.add_mutually_exclusive_group(required=True)
+    source.add_argument("--session", type=Path, help="Path to Delegator-owned SESSION.md")
+    source.add_argument("--run-dir", type=Path, help="Path to a SQLite-only run")
     p.add_argument("--include-internal-ids", action="store_true", help="Explicit diagnostic view only")
     args = p.parse_args(argv)
     try:
+        if args.run_dir:
+            if (args.run_dir / "SESSION.md").exists():
+                raise ValueError("run has competing SESSION.md and SQLite authorities")
+            ledger=Path(__file__).resolve().parents[1] / "skills/herdr-engineering-loop/scripts/herdr_ledger.py"
+            command=[sys.executable,str(ledger),"--run-dir",str(args.run_dir),"status","--human"]
+            if args.include_internal_ids:command.append("--ids")
+            result=subprocess.run(command,capture_output=True,text=True,timeout=10,check=False)
+            if result.returncode:raise ValueError(result.stderr.strip() or "ledger status unavailable")
+            print(result.stdout,end="")
+            return 0
         print(render(args.session.read_text(encoding="utf-8"), args.include_internal_ids), end="")
         return 0
-    except (ValueError, OSError) as e:
+    except (ValueError, OSError, subprocess.TimeoutExpired) as e:
         print("ERROR: " + str(e), file=sys.stderr)
         return 2
 

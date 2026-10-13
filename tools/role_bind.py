@@ -423,9 +423,16 @@ def main(argv=None):
         if not repo.is_dir():
             raise ValueError("--repo must refer to an existing directory")
         config, agents = read_and_validate(args.config, args.run_id)
+        is_sqlite = config.get("state_backend") == "sqlite"
         run_dir = repo / ".herdr-loop" / config["run_id"]
         if run_dir.is_symlink():
             raise RuntimeError("Refusing symlink run directory")
+        if is_sqlite:
+            if (run_dir / "SESSION.md").exists():
+                raise RuntimeError("Refusing SQLite role bind over an existing SESSION.md run")
+        else:
+            if (run_dir / "ledger.sqlite").exists():
+                raise RuntimeError("Refusing Markdown role bind over a SQLite ledger run")
         files = {run_dir / "ROSTER.md": render_roster(config, agents, repo, run_dir)}
         activation = {"run_id": config["run_id"], "repo": str(repo), "agents": []}
         for role, agent in agents:
@@ -474,13 +481,16 @@ def main(argv=None):
             json_path.parent.mkdir(parents=True, exist_ok=True)
             json_path.write_text(new_json, encoding="utf-8")
         print(("WOULD WRITE" if args.dry_run else "WROTE"), json_path)
-        session = run_dir / "SESSION.md"
-        if not session.exists():
-            if not args.dry_run:
-                session.write_text(render_session(config, repo), encoding="utf-8")
-            print(("WOULD WRITE" if args.dry_run else "WROTE"), session)
+        if not is_sqlite:
+            session = run_dir / "SESSION.md"
+            if not session.exists():
+                if not args.dry_run:
+                    session.write_text(render_session(config, repo), encoding="utf-8")
+                print(("WOULD WRITE" if args.dry_run else "WROTE"), session)
+            else:
+                print("PRESERVED", session, "(live ledger never overwritten)")
         else:
-            print("PRESERVED", session, "(live ledger never overwritten)")
+            print("SQLITE-MODE", run_dir, "(SESSION.md suppressed; orchestration state in ledger.sqlite)")
         print("NOTE: .herdr-loop files are local runtime context; exclude them from Git commits.")
         return 0
     except (ValueError, OSError, RuntimeError, json.JSONDecodeError) as exc:

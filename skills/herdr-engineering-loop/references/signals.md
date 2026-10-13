@@ -1,5 +1,7 @@
 # Signal and Receipt Contract (current Herdr, without Relay)
 
+For a future SQLite-only run, use the correlated envelope and typed receipt commands in [SQLite ledger continuation](sqlite-ledger-pilot.md). The Markdown formats below remain authoritative for existing runs. A text file containing an envelope is an operator attestation, not independent proof that Herdr delivered or processed it; inspect the named recipient and artifact before advancing state.
+
 **Read this on role activation and again before completing a task.** There is no assumed `herdr signal` command or installed Relay/Signals bridge. Current transport is a **named Herdr agent prompt**; the durable artifact (`READY.md`, `REPORT.md`, verification or decision file) remains authoritative. Herdr `idle`/`done`, a notification toast, and a successful `agent prompt` submission are **not** proof that the receiver processed a handoff.
 
 ## Directed routes (role names resolved from the run's ROLE.md / role packet)

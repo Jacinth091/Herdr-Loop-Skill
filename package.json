@@ -1,0 +1,39 @@
+{
+  "name": "herdr-role-pack",
+  "version": "2.8.0",
+  "description": "Herdr role pack skills with a gated SQLite ledger continuation for future new runs",
+  "main": "bin/install.js",
+  "bin": {
+    "herdr-role-pack": "bin/install.js",
+    "herdr-skills": "bin/install.js"
+  },
+  "scripts": {
+    "install-skills": "node bin/install.js",
+    "dry-run": "node bin/install.js --dry-run",
+    "test": "python -m unittest tests/test_ledger_pilot.py tests/test_pack.py tests/test_progress_view.py"
+  },
+  "keywords": [
+    "herdr",
+    "skills",
+    "claude",
+    "codex",
+    "antigravity",
+    "agent",
+    "orchestration",
+    "sqlite"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "files": [
+    "bin",
+    "skills",
+    "tools",
+    "examples",
+    "manifest.json",
+    "README.md",
+    "CHANGELOG.md"
+  ]
+}

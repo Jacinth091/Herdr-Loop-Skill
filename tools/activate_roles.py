@@ -54,16 +54,17 @@ def main(argv=None):
             return 0
         if os.environ.get("HERDR_ENV") != "1":
             raise ValueError("HERDR_ENV=1 required; run from an existing Herdr-managed pane")
-        if not shutil.which("herdr"):
+        herdr = shutil.which("herdr")
+        if not herdr:
             raise ValueError("herdr command not found")
         # Preflight existence of ALL selected agents before sending ANY role prompt.
         for a in targets:
-            res = subprocess.run(["herdr", "agent", "get", a["name"]], stdout=subprocess.PIPE,
+            res = subprocess.run([herdr, "agent", "get", a["name"]], stdout=subprocess.PIPE,
                                  stderr=subprocess.PIPE, text=True, timeout=15, check=False)
             if res.returncode != 0:
                 raise ValueError("Agent not available: " + a["name"] + ": " + (res.stderr or res.stdout).strip()[:250])
         for a in targets:
-            res = subprocess.run(["herdr", "agent", "prompt", a["name"], a["prompt"]],
+            res = subprocess.run([herdr, "agent", "prompt", a["name"], a["prompt"]],
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                  text=True, timeout=30, check=False)
             if res.returncode != 0:

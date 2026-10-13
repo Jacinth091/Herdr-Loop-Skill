@@ -1,5 +1,6 @@
 """Offline smoke tests for role binder and activation guards."""
 import copy
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -7,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 BIND = ROOT / "tools" / "role_bind.py"
@@ -39,7 +41,31 @@ class RolePackTests(unittest.TestCase):
     def test_sqlite_pilot_shipped_inside_controller(self):
         pilot = ROOT / "skills" / "herdr-engineering-loop" / "scripts" / "herdr_ledger.py"
         self.assertTrue(pilot.is_file())
-        self.assertIn("offline", pilot.read_text(encoding="utf8").lower())
+        self.assertIn("live use remains gated", pilot.read_text(encoding="utf8").lower())
+
+    def test_bind_refuses_existing_sqlite_authority(self):
+        run=self.repo / ".herdr-loop" / self.config["run_id"]
+        run.mkdir(parents=True)
+        (run / "ledger.sqlite").write_bytes(b"existing pilot")
+        result=self.bind()
+        self.assertNotEqual(result.returncode,0)
+        self.assertIn("SQLite ledger run",result.stderr)
+        self.assertFalse((run / "SESSION.md").exists())
+
+    def test_bind_sqlite_mode_suppresses_session_md_and_refuses_existing_session_md(self):
+        run = self.repo / ".herdr-loop" / self.config["run_id"]
+        self.config["state_backend"] = "sqlite"
+        self.save()
+        result = self.bind()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((run / "SESSION.md").exists())
+        self.assertTrue((run / "ACTIVATION.json").exists())
+        self.assertTrue((run / "ACTIVATE.md").exists())
+        # Refuses when SESSION.md exists
+        (run / "SESSION.md").write_text("existing markdown authority\n", encoding="utf8")
+        result_blocked = self.bind("--force")
+        self.assertNotEqual(result_blocked.returncode, 0)
+        self.assertIn("existing SESSION.md run", result_blocked.stderr)
 
     def test_bundle_roles_exist(self):
         for skill in ("herdr-engineering-loop", "herdr-manager", "herdr-delegator", "herdr-worker", "herdr-verifier", "herdr-critic"):
@@ -241,11 +267,23 @@ class RolePackTests(unittest.TestCase):
 
     def test_herdr_mock_activation_uses_pinned_agent_names_and_prompts(self):
         self.assertEqual(self.bind().returncode, 0)
+        if os.name == "nt":
+            spec = importlib.util.spec_from_file_location("activate_roles_under_test", ACTIVATE)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            fake = subprocess.CompletedProcess([], 0, "{}", "")
+            with mock.patch.dict(os.environ, HERDR_ENV="1"), mock.patch.object(module.shutil, "which", return_value="herdr.exe"), mock.patch.object(module.subprocess, "run", return_value=fake) as calls:
+                self.assertEqual(module.main(["--run-dir", str(self.repo / ".herdr-loop" / self.config["run_id"])]), 0)
+            argv = [call.args[0] for call in calls.call_args_list]
+            self.assertEqual([a[1:4] for a in argv[:2]], [["agent","get","architect"],["agent","get","dispatcher"]])
+            self.assertEqual([a[1:4] for a in argv[2:]], [["agent","prompt","architect"],["agent","prompt","dispatcher"]])
+            return
         executable_dir = self.root / "bin"
         executable_dir.mkdir()
         log = self.root / "called.txt"
-        fake = executable_dir / "herdr"
-        fake.write_text("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HERDR_TEST_LOG\"\nexit 0\n", encoding="utf8")
+        fake = executable_dir / ("herdr.cmd" if os.name == "nt" else "herdr")
+        fake.write_text('@echo off\r\necho %*>>"%HERDR_TEST_LOG%"\r\nexit /b 0\r\n' if os.name == "nt" else
+                        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HERDR_TEST_LOG\"\nexit 0\n", encoding="utf8")
         fake.chmod(0o755)
         env = dict(os.environ, HERDR_ENV="1", HERDR_TEST_LOG=str(log), PATH=str(executable_dir) + os.pathsep + os.environ.get("PATH", ""))
         result = self.activate(env=env)
@@ -480,8 +518,9 @@ class RolePackTests(unittest.TestCase):
         (workspace / ".herdr-loop").mkdir()
         executable_dir = self.root / "bin"
         executable_dir.mkdir()
-        fake = executable_dir / "herdr"
-        fake.write_text("#!/bin/sh\nprintf '%s\n' '{}'\nexit 0\n", encoding="utf8")
+        fake = executable_dir / ("herdr.cmd" if os.name == "nt" else "herdr")
+        fake.write_text("@echo off\r\necho {}\r\nexit /b 0\r\n" if os.name == "nt" else
+                        "#!/bin/sh\nprintf '%s\n' '{}'\nexit 0\n", encoding="utf8")
         fake.chmod(0o755)
         env = dict(os.environ, HERDR_ENV="1", HERDR_PANE_ID="w2:p1",
                    PATH=str(executable_dir) + os.pathsep + os.environ.get("PATH", ""))

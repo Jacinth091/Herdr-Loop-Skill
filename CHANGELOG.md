@@ -1,3 +1,8 @@
+# Unreleased - Gated SQLite continuation
+
+- Added explicit v1-to-v2 SQLite backup/upgrade, Herdr agent and pane process observation before attachment, correlated readiness/start/report receipts, Manager-gated retries with fresh attempt IDs, patch-matched candidate provenance, a run-wide heavy-test lock, captured verification commands, Manager decisions, incremental critique findings, cancellation fencing, and read-only status export.
+- Kept Markdown as the active role-pack authority and preserved installed skill copies. Live Herdr receipt processing, interrupted-test reconciliation and Windows cutover gates remain open.
+
 # v2.8.0 - Transactional SQLite ledger prototype (offline only)
 
 - Inspected the supplied `.herdr-loop.rar` and confirmed redundant, cumulative operational Markdown in a real run. The existing v2.7 `SESSION.md` system remains the live default.

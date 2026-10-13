@@ -1,7 +1,7 @@
 {
   "name": "herdr-role-pack",
   "version": "2.8.0",
-  "description": "Herdr role skills with optional offline SQLite ledger prototype for future token-efficient coordination",
+  "description": "Herdr role skills with a gated SQLite ledger continuation for future new runs",
   "skills": [
     "herdr-engineering-loop",
     "herdr-manager",
@@ -17,7 +17,8 @@
   ],
   "installers": [
     "install.ps1",
-    "install.sh"
+    "install.sh",
+    "bin/install.js"
   ],
   "optional_tools": [
     "tools/role_bind.py",

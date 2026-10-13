@@ -1,0 +1,21 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Local Herdr runs and disposable tracers
+.herdr-loop/
+.sqlite-tracer/
+
+# Virtual environments
+.venv/
+env/
+venv/
+
+# IDE and OS artifacts
+.idea/
+.vscode/
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store

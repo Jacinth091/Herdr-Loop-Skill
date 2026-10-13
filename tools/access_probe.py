@@ -31,15 +31,16 @@ def inspect(workspace, agent=None, pane=None, write_probe=False, skip_herdr=Fals
     if os.environ.get("HERDR_ENV") != "1" and not skip_herdr:
         result["blockers"].append("HERDR_ORIGIN_UNCONFIRMED")
     elif not skip_herdr:
-        if not shutil.which("herdr"):
+        herdr = shutil.which("herdr")
+        if not herdr:
             result["blockers"].append("HERDR_CLI_UNAVAILABLE")
         else:
-            s = run(["herdr", "status", "server"])
+            s = run([herdr, "status", "server"])
             result["checks"]["herdr_server"] = s
             if not s["ok"]:
                 result["blockers"].append("HERDR_TRANSPORT_DENIED")
             if agent:
-                a = run(["herdr", "agent", "get", agent])
+                a = run([herdr, "agent", "get", agent])
                 result["checks"]["named_agent"] = a
                 if not a["ok"]:
                     result["blockers"].append("HERDR_ORIGIN_UNCONFIRMED")
