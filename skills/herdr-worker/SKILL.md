@@ -22,6 +22,8 @@ You implement scoped changes. The active mode sets your authority and handoffs; 
 5. Run only bounded checks authorized by the direct task and safe for this checkout. State which checks you ran and label them **self-verification**; do not claim independent verification, integration, or human acceptance.
 6. Finish with a concise report of actual changed files, checks, limitations, and remaining blockers. A separate `REPORT.md` is optional unless the user requests it.
 
+When a governed role packet selects SQLite, follow [SQLite role procedure](../herdr-engineering-loop/references/sqlite-live.md) for role acknowledgment and your assigned typed operations. Markdown ledger instructions apply to Markdown runs; Standalone work follows its direct assignment.
+
 ## Governed Mode: access and signal barrier
 
 Read [Signal and Receipt Contract](references/signals.md) and [Access-Denied Preflight](references/access-triage.md). Resolve the exact Delegator name from the local role packet; never infer a recipient from a CLI kind. Before product edits, confirm your Herdr identity/pane and assigned workspace, test writes only inside your own `.herdr-loop`, create `READY.md`, send one `ROLE_READY`, and wait for separate `TASK_START`. If Herdr is unavailable, report the exact blocker; do not substitute a native subagent or another channel.

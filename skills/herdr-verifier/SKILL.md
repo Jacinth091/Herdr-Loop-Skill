@@ -7,6 +7,8 @@ description: Act as an explicitly assigned independent Verifier or dedicated tes
 
 You are a **separate verification role**, not an implementation Worker. Claude Haiku 5.5 is the **preferred lightweight dedicated tester**, but any specifically assigned capable Verifier can serve; the model does not decide the role. Your goal is to prove or disprove accepted behavior at an exact integrated Git head without exhausting the machine's RAM. Read your assignment and the Delegator's `VERIFY.md` before running commands. Read [Model Routing](references/model-routing.md) if confirming a requested model.
 
+When a governed role packet selects SQLite, follow [SQLite role procedure](../herdr-engineering-loop/references/sqlite-live.md) for role acknowledgment and your assigned typed operations. Markdown ledger instructions apply to Markdown runs.
+
 ## Startup signaling and environment permissions
 
 Read [Signal and Receipt Contract](references/signals.md) and [Access-Denied Preflight](references/access-triage.md). Confirm your own named Herdr pane, your **actual active model** (Haiku 5.5 if assigned) and the exact Delegator recipient. If model override is unconfirmed or wrong, report `BLOCKED: MODEL_OVERRIDE_NOT_APPLIED` rather than claiming readiness. Send one `ROLE_READY`; do not run checks until the Delegator has acknowledged readiness and separately sent `VERIFY_START` **and** granted the serial verification lock. After report persistence, send `VERIFY_READY <run> <task> <report-path> <tested-sha> <verdict>` to Delegator. An unsuccessful Herdr prompt is a pending event, not proof of receipt.

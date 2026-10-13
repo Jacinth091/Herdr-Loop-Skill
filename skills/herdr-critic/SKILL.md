@@ -7,6 +7,8 @@ description: Act as an independent, read-only Critic (Claude Sonnet 5.5 by defau
 
 Read the explicit role packet and [Signal and Receipt Contract](references/signals.md). Confirm your live model matches the one your role packet assigns. **Claude Sonnet 5.5 (`claude-sonnet-5-5`)** is the recommended default for a Claude Critic; another CLI or model can serve when the human assigns it, and the read-only boundaries below apply unchanged. Default to one persistent named Herdr Critic pane; no Codex internal subagents or Claude in-process subagents. A Critic does not consume an implementation worker slot, but must respect the low-RAM budget and pause during heavy local verification if asked.
 
+When a governed role packet selects SQLite, follow [SQLite role procedure](../herdr-engineering-loop/references/sqlite-live.md) for role acknowledgment and your assigned typed operations. Markdown ledger instructions apply to Markdown runs.
+
 ## Mandatory readiness and authorization
 
 1. Confirm Herdr agent identity, assigned pane, run ID, recipient (Delegator), and a valid role packet; do not assume `claude` is a Herdr agent name.
