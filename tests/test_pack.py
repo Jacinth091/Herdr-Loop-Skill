@@ -107,8 +107,10 @@ class RolePackTests(unittest.TestCase):
         self.assertIn("/herdr-worker", roles[2]["prompt"])
         self.assertIn("NO tests", roles[2]["prompt"])
         worker_packet = (base / "role-packets/worker_t01.md").read_text(encoding="utf8")
-        self.assertIn("normal restricted permissions", worker_packet)
-        self.assertNotIn("--sandbox --dangerously-skip-permissions", worker_packet)
+        self.assertIn("normal permission prompts", worker_packet)
+        self.assertIn("human-selected unattended disposable worktree", worker_packet)
+        self.assertIn("--sandbox --dangerously-skip-permissions", worker_packet)
+        self.assertIn("confirming sandbox startup", worker_packet)
 
     def test_all_codex_roles_explicitly_ban_internal_subagents(self):
         self.config["agents"]["manager"]["kind"] = "codex"
