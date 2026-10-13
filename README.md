@@ -232,6 +232,8 @@ Generate isolated role instructions for the default Markdown engine:
 py -3 .\tools\role_bind.py --config .\roles.json --repo "C:\path\to\your\repo"
 ```
 
+An explicit `"state_backend": "sqlite"` currently creates a planning-only candidate database. `tools/activate_roles.py` blocks its activation until the live Herdr lifecycle has been verified. Existing Markdown runs stay on Markdown when rebound. `run_backend.py inspect` reports the selected authority; `switch` currently refuses transfers while lossless conversion and cutover are unfinished.
+
 ### Step 4: Dispatch Work & Track Progress
 1. **Manager Approval:** The Manager drafts `PLAN.md`. Once accepted by the human, the Delegator creates `tasks/T01.md`.
 2. **Worker Provisioning:** The Delegator creates a Git worktree for `T01` and opens a dedicated Herdr pane.
@@ -281,7 +283,7 @@ Agents coordinate through explicit handoff envelopes sent as Herdr prompt hints:
 
 - **Default 1 Worker:** To keep RAM usage safe on 8 GB–16 GB laptops, runs default to one active worker. Up to 3 independent workers may run only after explicit human approval.
 - **Worker Test-Execution Boundary:** Governed Workers never run tests or builds. Standalone Workers may run bounded, authorized self-checks and must report them as self-verification, not independent verification.
-- **Serial Heavy Test Lock:** In offline SQLite pilot runs, at most **one** memory-heavy local test process (pytest, npm test, docker build) holds the `heavy-local-verification` lock within the run database. In standard Markdown sessions, operators must serialize test executions across tasks. Across independent runs, operators must avoid concurrent heavy workloads.
+- **Serial Heavy Test Lock:** SQLite pilot checks use both a per-run claim and an exclusive machine lock for one memory-heavy local test process. In standard Markdown sessions, operators serialize test executions manually.
 
 ---
 
@@ -349,7 +351,7 @@ npx . --uninstall
 | **Role-Based Multi-Agent Workflow** | **Stable / Supported** | Manager, Delegator, Worker, Verifier, Critic, Controller. |
 | **Lead Mode (Manager + Delegator in one agent)** | **New in 2.8.1** | `agents.lead` in `roles.json` (see `examples/roles.lead.json`); human approves the plan and gives final acceptance. |
 | **Standard Markdown Ledger (`SESSION.md`)** | **Stable / Default** | Human-readable, transparent, zero-dependency. Active runtime authority. |
-| **Transactional SQLite Ledger** | **Offline Pilot Only** | Offline CLI pilot for evaluation only; not live-bindable (`role_bind.py` explicitly refuses `state_backend: "sqlite"`). |
+| **Transactional SQLite Ledger** | **Planning candidate only** | Explicit SQLite binding creates a `PLANNING` database; live activation and backend transfer remain gated. |
 | **Zero-Dependency Installers** | **Supported** | `npx .`, PowerShell (`install.ps1`), and POSIX shell (`install.sh`). |
 | **Safe Updater & Rollback** | **Supported** | `tools/update.py` with backup, mandatory checksum checks, and rollback. |
 | **Native Herdr Signals Transport** | *Future Proposal* | Current release uses Herdr `agent prompt` hints; documents remain truth. |

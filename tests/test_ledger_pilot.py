@@ -1,6 +1,7 @@
 """Offline proof for the opt-in SQLite ledger. Never launches Herdr or AI tools."""
 import hashlib
 import importlib.util
+import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import subprocess
@@ -43,6 +44,9 @@ class LedgerPilotTests(unittest.TestCase):
         unstarted.start()
         self.addCleanup(unstarted.stop)
         self.root = Path(self.temp.name)
+        lock_env = mock.patch.dict(os.environ, {"HERDR_LOCKS_DIR": str(self.root / "locks")})
+        lock_env.start()
+        self.addCleanup(lock_env.stop)
         self.repo = self.root / 'checkout'
         self.repo.mkdir()
         shell('git', 'init', '-q', str(self.repo))
@@ -168,6 +172,27 @@ class LedgerPilotTests(unittest.TestCase):
         self.assertIn('Prevent duplicate writes', view)
         self.assertNotIn('T01', view)
         self.assertFalse((self.run_dir/'SESSION.md').exists())
+
+    def test_planning_bootstrap_requires_separate_plan_and_human_grant(self):
+        self.cmd('init', '--run-id', 'sample', '--repo', str(self.repo), '--bootstrap')
+        self.assertIn('state=PLANNING', self.cmd('status'))
+        self.assertIn('not executing', self.cmd('task-add', '--task', 'T01',
+            '--title', 'Prevent duplicate writes', '--outcome', 'Only one record remains',
+            '--brief', 'TASK.md', '--request-id', 'add-T01', ok=False))
+        self.cmd('plan-approve', '--plan', 'PLAN.md', '--decision-id', 'PLAN-D1',
+                 '--authority', 'MANAGER', '--actor', 'manager', '--attestor', 'delegator',
+                 '--rationale', 'MANAGER.txt', '--request-id', 'plan1')
+        self.assertIn('not executing', self.cmd('task-add', '--task', 'T01',
+            '--title', 'Prevent duplicate writes', '--outcome', 'Only one record remains',
+            '--brief', 'TASK.md', '--request-id', 'add-T01', ok=False))
+        (self.run_dir / 'GRANT.md').write_text('Human authorizes execution of approved PLAN.md\n', encoding='utf8')
+        self.cmd('run-authorize', '--grant-ref', 'GRANT.md', '--decision-id', 'GRANT-D1',
+                 '--actor', 'human', '--attestor', 'delegator', '--request-id', 'grant1')
+        self.task()
+        self.assertIn('fence=1', self.reserve())
+        (self.run_dir / 'GRANT.md').write_text('Changed grant\n', encoding='utf8')
+        self.assertIn('grant changed', self.cmd('task-add', '--task', 'T02', '--title', 'Second task',
+            '--outcome', 'Second outcome', '--brief', 'TASK.md', '--request-id', 'add-T02', ok=False))
 
     def test_idempotent_report_and_conflicting_replay(self):
         self.reported()
@@ -363,7 +388,7 @@ class LedgerPilotTests(unittest.TestCase):
         with ThreadPoolExecutor(max_workers=2) as pool:
             results=list(pool.map(reserve,('T01','T02')))
         self.assertEqual(sorted(r.returncode for r in results),[0,2],results)
-        self.assertTrue(any('resource already claimed' in r.stderr for r in results))
+        self.assertTrue(any('resource already claimed' in r.stderr or 'BACKEND_LOCK_HELD' in r.stderr for r in results))
         self.assertEqual(1,sum('attempt-reserve' in x for x in self.cmd('events','--limit','20').splitlines()))
 
     def test_stale_writer_release_denied_after_reassignment(self):
@@ -426,10 +451,30 @@ class LedgerPilotTests(unittest.TestCase):
         shell('git','-C',str(self.repo),'worktree','add','-q','-b','integration-two',str(other),'HEAD')
         self.cmd('candidate-freeze','--task','T01','--candidate','C02','--checkout',str(other),'--request-id','freeze2')
         self.cmd('verify-start','--verification','V01','--candidate','C01','--verifier','haiku','--request-id','verify1')
+        self.assertIn('resource already claimed', self.cmd('verify-start', '--verification', 'V01',
+            '--candidate', 'C01', '--verifier', 'haiku', '--request-id', 'verify-again', ok=False))
+        self.assertTrue(ledger.machine_lock_path().is_file())
         error=self.cmd('verify-start','--verification','V02','--candidate','C02','--verifier','haiku2','--request-id','verify2',ok=False)
-        self.assertIn('resource already claimed',error)
+        self.assertIn('MACHINE_VERIFICATION_LOCK_HELD',error)
         with closing(sqlite3.connect(self.run_dir/'ledger.sqlite')) as db:
             self.assertEqual(1,db.execute("SELECT COUNT(*) FROM claim WHERE resource='heavy-local-verification' AND active=1").fetchone()[0])
+
+    def test_machine_lock_is_exclusive_across_run_directories(self):
+        first = str(self.run_dir.resolve())
+        second = str((self.root / 'another-run').resolve())
+        ledger.acquire_machine_verification_lock(first, 'V01', os.getpid())
+        with self.assertRaisesRegex(ledger.LedgerError, 'MACHINE_VERIFICATION_LOCK_HELD'):
+            ledger.acquire_machine_verification_lock(second, 'V01', os.getpid())
+        ledger.release_machine_verification_lock(first, 'V01')
+        ledger.acquire_machine_verification_lock(second, 'V01', os.getpid())
+        ledger.release_machine_verification_lock(second, 'V01')
+
+    def test_closed_pane_does_not_release_a_live_pid(self):
+        with mock.patch.object(ledger, 'observe_stopped', REAL_STOPPED), \
+             mock.patch.object(ledger, 'herdr_json', return_value={'panes': []}), \
+             mock.patch.object(ledger, 'is_pid_alive', return_value=True):
+            with self.assertRaisesRegex(ledger.LedgerError, 'pane closed but agent PID is still alive'):
+                ledger.observe_stopped('w3:p1', 1234)
 
     def test_unrelated_clean_candidate_rejected(self):
         self.reported()
@@ -505,8 +550,27 @@ class LedgerPilotTests(unittest.TestCase):
             self.assertEqual(1,backup.execute('PRAGMA user_version').fetchone()[0])
         with closing(sqlite3.connect(db)) as future:
             future.execute('PRAGMA user_version=99')
-        self.assertIn('schema is not v2',self.cmd('status',ok=False))
+        self.assertIn('requires explicit upgrade',self.cmd('status',ok=False))
         self.assertIn('unknown ledger schema',self.cmd('upgrade',ok=False))
+
+    def test_v2_upgrade_adds_verification_process_pid_and_keeps_backup(self):
+        self.init()
+        db = self.run_dir / 'ledger.sqlite'
+        with closing(sqlite3.connect(db)) as conn:
+            conn.execute('ALTER TABLE verification DROP COLUMN process_pid')
+            conn.execute('PRAGMA user_version=2')
+            conn.commit()
+        self.assertIn('requires explicit upgrade', self.cmd('status', ok=False))
+
+        self.assertIn('schema=3', self.cmd('upgrade'))
+        with closing(sqlite3.connect(db)) as upgraded:
+            columns = {row[1] for row in upgraded.execute('PRAGMA table_info(verification)')}
+            self.assertIn('process_pid', columns)
+            self.assertEqual(3, upgraded.execute('PRAGMA user_version').fetchone()[0])
+        with closing(sqlite3.connect(self.run_dir / 'ledger.v2.backup.sqlite')) as backup:
+            columns = {row[1] for row in backup.execute('PRAGMA table_info(verification)')}
+            self.assertNotIn('process_pid', columns)
+            self.assertEqual(2, backup.execute('PRAGMA user_version').fetchone()[0])
 
     def test_progress_and_export_are_read_only_projections(self):
         self.init();self.task()

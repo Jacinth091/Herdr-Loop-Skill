@@ -61,15 +61,18 @@ class RolePackTests(unittest.TestCase):
         (run / "ledger.sqlite").write_bytes(b"existing pilot")
         result=self.bind()
         self.assertNotEqual(result.returncode,0)
-        self.assertIn("SQLite ledger run",result.stderr)
+        self.assertIn("SQLITE_PILOT_NOT_LIVE",result.stderr)
         self.assertFalse((run / "SESSION.md").exists())
 
-    def test_bind_sqlite_mode_fails_closed_as_offline_pilot(self):
+    def test_bind_sqlite_mode_creates_planning_ledger_without_dispatch(self):
         self.config["state_backend"] = "sqlite"
         self.save()
         result = self.bind()
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("SQLITE_BACKEND_NOT_LIVE", result.stderr)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        run = self.repo / ".herdr-loop" / self.config["run_id"]
+        self.assertTrue((run / "ledger.sqlite").is_file())
+        self.assertFalse((run / "SESSION.md").exists())
+        self.assertIn("SQLITE_BACKEND_NOT_LIVE", self.activate().stderr)
 
     def test_bind_invalid_state_backend_fails(self):
         self.config["state_backend"] = "unknown_backend"

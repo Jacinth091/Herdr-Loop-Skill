@@ -2,6 +2,8 @@
 
 **As of October 12, 2026:** adopt SQLite as the **recommended future live coordination ledger**, but do not replace the current Markdown-based execution process yet. The v2.8 download includes a self-contained offline pilot; live operation remains on the v2.7-compatible Markdown state path until the gates below pass.
 
+**Implementation checkpoint, October 13:** Role binding can explicitly create a planning-only SQLite run with a selected-backend record. Omitted `state_backend` still selects Markdown. SQLite role activation and backend switching fail closed; the live tracer, complete role instructions, evidence-preserving conversion, and real Windows Herdr run remain cutover gates. The test fixture is not live-run proof.
+
 ## What the uploaded archive established
 
 The S3 private-media run has a 131,147-byte `SESSION.md`, 245 Markdown files consuming 1,547,842 bytes, and a six-file cumulative CR-03 critique chain totaling 300,416 bytes. Each successive CR-03 file includes the entire preceding file as a prefix. These are verified **disk sizes**, not invoices or measured language-model token usage.
@@ -21,11 +23,11 @@ The CLI does not spawn Herdr agents, receive real Signals, enforce human identit
 
 | Gate | Requirement | Status |
 |---|---|---|
-| Source inspection | Inspect current installed agent skills, Herdr CLI/help, signal APIs and actual launch behavior on the user's Windows machine | Not done remotely |
+| Source inspection | Inspect current installed agent skills, Herdr CLI/help, signal APIs and actual launch behavior on the user's Windows machine | CLI help and read-only agent metadata checked; disposable launch pending (see `docs/SQLITE_WINDOWS_GATE.md`) |
 | Live tracer | Observe Herdr spawn, `ROLE_READY`, task start, correlated report, integration, critique, verify and acceptance with bounded SQLite receipts | Not done |
 | Missing lifecycle | Implement decisions, incremental critique findings, cancellation, ambiguous recovery and human export without a second state authority | Not done |
 | Identity and permissions | Bind observed pane+process+model+worktree to attempt; never auto-elevate on Windows denial | Offline structural checks only |
-| Windows resource safety | Exercise locks, busy DB, paths, real Git worktrees and permissions on the user's machine | Not done |
+| Windows resource safety | Exercise locks, busy DB, paths, real Git worktrees and permissions on the user's machine | Mocked/fixture paths tested; real role run pending |
 | Efficiency evidence | Measure input/output tokens or comparable prompt-volume proxies per accepted task, and verify no quality-gate regressions | Historical file counts only |
 | Migration | New-run opt-in after above gates; old runs remain read-only and are never silently promoted from prose | Deferred |
 

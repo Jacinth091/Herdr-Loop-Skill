@@ -17,15 +17,20 @@ import os
 import shutil
 from datetime import datetime, timezone
 
-VERSION = 2
+SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+import run_backend
+
+VERSION = 3
 TASK = re.compile(r"^T[0-9]{2,4}$")
 ATTEMPT = re.compile(r"^(T[0-9]{2,4})-A[1-9][0-9]{0,2}$")
 KEY = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,69}$")
 RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 SCHEMA = """
-CREATE TABLE run(id TEXT PRIMARY KEY, repo TEXT NOT NULL, plan_path TEXT NOT NULL,
- plan_sha TEXT NOT NULL, grant_ref TEXT NOT NULL, max_workers INTEGER NOT NULL,
- state TEXT NOT NULL DEFAULT 'EXECUTING', generation INTEGER NOT NULL DEFAULT 1);
+CREATE TABLE run(id TEXT PRIMARY KEY, repo TEXT NOT NULL, plan_path TEXT,
+ plan_sha TEXT, grant_ref TEXT, max_workers INTEGER NOT NULL,
+ state TEXT NOT NULL DEFAULT 'PLANNING', generation INTEGER NOT NULL DEFAULT 1);
 CREATE TABLE task(id TEXT PRIMARY KEY, title TEXT NOT NULL, outcome TEXT NOT NULL,
  deps TEXT NOT NULL, brief_path TEXT NOT NULL, brief_sha TEXT NOT NULL,
  state TEXT NOT NULL DEFAULT 'PLANNED', accepted_candidate TEXT,
@@ -124,6 +129,9 @@ def connect(root, read_only=False):
     db = root / "ledger.sqlite"
     if not db.exists():
         fail("ledger.sqlite is missing; initialize a new pilot run first")
+    backend, _ = run_backend.get_active_backend(root)
+    if backend != "sqlite":
+        fail("BACKEND_INTEGRITY_BLOCKED: SQLite is not the selected authority")
     uri = db.resolve().as_uri() + "?mode=ro" if read_only else str(db)
     conn=None
     try:
@@ -137,12 +145,7 @@ def connect(root, read_only=False):
         fail("BLOCKED: LEDGER_UNREADABLE")
     if version != VERSION:
         conn.close()
-        fail("ledger schema is not v2; use explicit upgrade for v1, reject unknown versions")
-    if not read_only:
-        try:
-            conn.execute("ALTER TABLE verification ADD COLUMN process_pid INTEGER")
-        except sqlite3.OperationalError:
-            pass
+        fail(f"ledger schema v{version} requires explicit upgrade to v{VERSION}")
     return conn
 
 
@@ -155,43 +158,61 @@ def upgrade(root):
         conn.execute("PRAGMA busy_timeout=3000")
         version = conn.execute("PRAGMA user_version").fetchone()[0]
         if version == VERSION:
-            return "OK schema=2 already-current"
-        if version != 1:
+            return f"OK schema={VERSION} already-current"
+        if version not in (1, 2):
             fail("unknown ledger schema; upgrade refused")
-        backup = root / "ledger.v1.backup.sqlite"
-        if backup.exists():
-            fail("v1 backup already exists; inspect before retrying")
-        with closing(sqlite3.connect(str(backup))) as destination:
-            conn.backup(destination)
-        try:
-            conn.execute("BEGIN IMMEDIATE")
-            for sql in (
-                "ALTER TABLE attempt ADD COLUMN terminal_id TEXT",
-                "ALTER TABLE attempt ADD COLUMN process_pid INTEGER",
-                "ALTER TABLE attempt ADD COLUMN ready_event TEXT",
-                "ALTER TABLE attempt ADD COLUMN start_event TEXT",
-                "ALTER TABLE candidate ADD COLUMN source_sha TEXT",
-                "ALTER TABLE candidate ADD COLUMN integration_proof TEXT",
-                "ALTER TABLE task ADD COLUMN critique_required INTEGER NOT NULL DEFAULT 0",
-                "ALTER TABLE verification ADD COLUMN heavy_generation INTEGER NOT NULL DEFAULT 0",
-                "ALTER TABLE verification ADD COLUMN gate TEXT NOT NULL DEFAULT 'legacy-unverified'",
-                "ALTER TABLE verification ADD COLUMN command TEXT",
-                "ALTER TABLE verification ADD COLUMN process_pid INTEGER",
-                "CREATE TABLE decision(id TEXT PRIMARY KEY, subject TEXT NOT NULL, authority TEXT NOT NULL, actor TEXT NOT NULL, attestor TEXT NOT NULL, disposition TEXT NOT NULL, provenance TEXT NOT NULL, rationale_path TEXT, rationale_sha TEXT)",
-                "CREATE TABLE critique(id TEXT PRIMARY KEY, candidate_id TEXT NOT NULL REFERENCES candidate(id), critic TEXT NOT NULL, report_path TEXT NOT NULL, report_sha TEXT NOT NULL)",
-                "CREATE TABLE finding(id TEXT PRIMARY KEY, candidate_id TEXT NOT NULL REFERENCES candidate(id), review_id TEXT NOT NULL REFERENCES critique(id), actor TEXT NOT NULL, severity TEXT NOT NULL, disposition TEXT NOT NULL, evidence_path TEXT NOT NULL, evidence_sha TEXT NOT NULL)",
-                "CREATE TABLE signal(event_id TEXT PRIMARY KEY, attempt_id TEXT NOT NULL REFERENCES attempt(id), kind TEXT NOT NULL, sender TEXT NOT NULL, recipient TEXT NOT NULL, sender_pane TEXT NOT NULL, evidence_path TEXT NOT NULL, evidence_sha TEXT NOT NULL, receipt_path TEXT NOT NULL, receipt_sha TEXT NOT NULL)",
-            ):
-                conn.execute(sql)
-            # v1 asserted STARTED without a Herdr observation; force reconciliation.
-            conn.execute("UPDATE attempt SET state='UNCERTAIN' WHERE state IN ('RESERVED','STARTED')")
-            conn.execute("UPDATE verification SET state='UNCERTAIN' WHERE state='STARTED'")
-            conn.execute("PRAGMA user_version=2")
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        return f"OK schema=2 backup={backup.name} v1-live-attempts=UNCERTAIN"
+        if version == 1:
+            backup = root / "ledger.v1.backup.sqlite"
+            if backup.exists():
+                fail("v1 backup already exists; inspect before retrying")
+            with closing(sqlite3.connect(str(backup))) as destination:
+                conn.backup(destination)
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                for sql in (
+                    "ALTER TABLE attempt ADD COLUMN terminal_id TEXT",
+                    "ALTER TABLE attempt ADD COLUMN process_pid INTEGER",
+                    "ALTER TABLE attempt ADD COLUMN ready_event TEXT",
+                    "ALTER TABLE attempt ADD COLUMN start_event TEXT",
+                    "ALTER TABLE candidate ADD COLUMN source_sha TEXT",
+                    "ALTER TABLE candidate ADD COLUMN integration_proof TEXT",
+                    "ALTER TABLE task ADD COLUMN critique_required INTEGER NOT NULL DEFAULT 0",
+                    "ALTER TABLE verification ADD COLUMN heavy_generation INTEGER NOT NULL DEFAULT 0",
+                    "ALTER TABLE verification ADD COLUMN gate TEXT NOT NULL DEFAULT 'legacy-unverified'",
+                    "ALTER TABLE verification ADD COLUMN command TEXT",
+                    "ALTER TABLE verification ADD COLUMN process_pid INTEGER",
+                    "CREATE TABLE decision(id TEXT PRIMARY KEY, subject TEXT NOT NULL, authority TEXT NOT NULL, actor TEXT NOT NULL, attestor TEXT NOT NULL, disposition TEXT NOT NULL, provenance TEXT NOT NULL, rationale_path TEXT, rationale_sha TEXT)",
+                    "CREATE TABLE critique(id TEXT PRIMARY KEY, candidate_id TEXT NOT NULL REFERENCES candidate(id), critic TEXT NOT NULL, report_path TEXT NOT NULL, report_sha TEXT NOT NULL)",
+                    "CREATE TABLE finding(id TEXT PRIMARY KEY, candidate_id TEXT NOT NULL REFERENCES candidate(id), review_id TEXT NOT NULL REFERENCES critique(id), actor TEXT NOT NULL, severity TEXT NOT NULL, disposition TEXT NOT NULL, evidence_path TEXT NOT NULL, evidence_sha TEXT NOT NULL)",
+                    "CREATE TABLE signal(event_id TEXT PRIMARY KEY, attempt_id TEXT NOT NULL REFERENCES attempt(id), kind TEXT NOT NULL, sender TEXT NOT NULL, recipient TEXT NOT NULL, sender_pane TEXT NOT NULL, evidence_path TEXT NOT NULL, evidence_sha TEXT NOT NULL, receipt_path TEXT NOT NULL, receipt_sha TEXT NOT NULL)",
+                ):
+                    conn.execute(sql)
+                # v1 asserted STARTED without a Herdr observation; force reconciliation.
+                conn.execute("UPDATE attempt SET state='UNCERTAIN' WHERE state IN ('RESERVED','STARTED')")
+                conn.execute("UPDATE verification SET state='UNCERTAIN' WHERE state='STARTED'")
+                conn.execute(f"PRAGMA user_version={VERSION}")
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+            return f"OK schema={VERSION} backup={backup.name} v1-live-attempts=UNCERTAIN"
+        if version == 2:
+            backup = root / "ledger.v2.backup.sqlite"
+            if backup.exists():
+                fail("v2 backup already exists; inspect before retrying")
+            with closing(sqlite3.connect(str(backup))) as destination:
+                conn.backup(destination)
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                verification_columns = {row[1] for row in conn.execute("PRAGMA table_info(verification)")}
+                if "process_pid" not in verification_columns:
+                    conn.execute("ALTER TABLE verification ADD COLUMN process_pid INTEGER")
+                conn.execute(f"PRAGMA user_version={VERSION}")
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+            return f"OK schema={VERSION} backup={backup.name}"
 
 
 def herdr_json(*argv):
@@ -253,7 +274,11 @@ def observe_stopped(pane, pid):
             fail("BLOCKED: pane identity changed; cannot release claim")
         if any(p.get("pid") == pid for p in process.get("foreground_processes", [])):
             fail("UNCERTAIN: observed agent process still present")
+        if is_pid_alive(pid):
+            fail("UNCERTAIN: agent PID still alive outside pane foreground")
         return f"Herdr pane={pane} pid={pid} absent"
+    if is_pid_alive(pid):
+        fail("UNCERTAIN: pane closed but agent PID is still alive")
     return f"Herdr pane={pane} closed and pid={pid} absent"
 
 
@@ -264,6 +289,11 @@ def is_pid_alive(pid):
     if sys.platform == "win32":
         import ctypes
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.argtypes = (ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong)
+        kernel32.OpenProcess.restype = ctypes.c_void_p
+        kernel32.GetExitCodeProcess.argtypes = (ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong))
+        kernel32.GetExitCodeProcess.restype = ctypes.c_int
+        kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
         handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
         if not handle:
             return ctypes.get_last_error() != 87  # ERROR_INVALID_PARAMETER: no such process
@@ -303,6 +333,51 @@ def observe_recipient(name, pane):
         fail("BLOCKED: SIGNAL_RECIPIENT_MISMATCH")
 
 
+def machine_lock_path():
+    base = Path(os.environ.get("HERDR_LOCKS_DIR") or (Path.home() / ".herdr-locks"))
+    base.mkdir(parents=True, exist_ok=True)
+    return base / "heavy_verification.lock"
+
+
+def check_machine_verification_lock(run_id, verification_id):
+    p = machine_lock_path()
+    if not p.is_file():
+        return
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        fail("BLOCKED: MACHINE_VERIFICATION_LOCK_UNREADABLE; reconcile before testing")
+    if data.get("run_id") != run_id or data.get("verification_id") != verification_id:
+        fail(f"BLOCKED: MACHINE_VERIFICATION_LOCK_HELD by run '{data.get('run_id')}' verification '{data.get('verification_id')}'")
+
+
+def acquire_machine_verification_lock(run_id, verification_id, pid):
+    p = machine_lock_path()
+    payload = {
+        "run_id": run_id,
+        "verification_id": verification_id,
+        "pid": pid,
+        "acquired_at": stamp()
+    }
+    try:
+        with p.open("x", encoding="utf-8") as output:
+            json.dump(payload, output, indent=2)
+            output.flush()
+            os.fsync(output.fileno())
+        return True
+    except FileExistsError:
+        check_machine_verification_lock(run_id, verification_id)
+        return False
+
+
+def release_machine_verification_lock(run_id, verification_id):
+    p = machine_lock_path()
+    if not p.is_file():
+        fail("BLOCKED: MACHINE_VERIFICATION_LOCK_MISSING; reconcile before releasing claim")
+    check_machine_verification_lock(run_id, verification_id)
+    p.unlink()
+
+
 def one(conn, sql, args=()):
     return conn.execute(sql, args).fetchone()
 
@@ -318,11 +393,18 @@ def get(conn, table, key):
 def guarded(conn, root, allowed_states=("EXECUTING",), check_plan=True):
     run = one(conn, "SELECT * FROM run LIMIT 1")
     if not run: fail("run metadata missing")
-    plan = (root / run["plan_path"]).resolve()
-    if check_plan and (not plan.is_file() or fingerprint(plan) != run["plan_sha"]):
-        fail("approved PLAN.md changed; halt until new authorized generation")
     if run["state"] not in allowed_states:
         fail("run is not executing; no new transitions allowed")
+    if check_plan:
+        if not run["plan_path"] or not run["plan_sha"]:
+            fail("run has no approved plan; transitions not allowed")
+        plan = (root / run["plan_path"]).resolve()
+        if not plan.is_file() or fingerprint(plan) != run["plan_sha"]:
+            fail("approved PLAN.md changed; halt until new authorized generation")
+        grant = one(conn, "SELECT rationale_path,rationale_sha FROM decision WHERE subject=? AND authority='HUMAN' AND provenance='execution-grant' ORDER BY rowid DESC LIMIT 1", (run["id"],))
+        if grant and (not run["grant_ref"] or grant["rationale_path"] != run["grant_ref"]
+                      or relative_evidence(root, grant["rationale_path"])[1] != grant["rationale_sha"]):
+            fail("human execution grant changed; halt until reconciliation")
     return run
 
 
@@ -412,11 +494,23 @@ def signal_receipt(root, run_id, kind, attempt, event_id, sender, pane, recipien
 
 
 def operation(root, args):
+    if args.command in ("status", "next", "task-show", "recover", "events", "export", "verify-exec"):
+        return _operation(root, args)
+    try:
+        with run_backend.run_lock(root):
+            return _operation(root, args)
+    except RuntimeError as exc:
+        fail(str(exc))
+
+
+def _operation(root, args):
     name = args.command
     if name == "upgrade":
         return upgrade(root)
     if name == "init":
         if not RUN_ID.fullmatch(args.run_id): fail("invalid run ID")
+        if (root / run_backend.SELECTOR_FILE).exists():
+            fail("BACKEND_INTEGRITY_BLOCKED: existing selector must be reconciled before initialization")
         if args.max_workers not in (1,2,3): fail("max-workers must be 1, 2 or 3")
         if args.max_workers > 1 and not args.parallel_approved:
             fail("parallel worker budget requires explicit approval")
@@ -424,22 +518,34 @@ def operation(root, args):
             fail("refusing to create a competing ledger for an existing SESSION.md run")
         if (root / "ledger.sqlite").exists(): fail("ledger already initialized")
         if not root.is_dir(): fail("run directory must be created explicitly")
-        plan_path, plan_hash = relative_evidence(root, args.plan)
         repo_path = Path(args.repo).resolve(strict=True)
-        if not (repo_path / ".git").exists():
+        is_bootstrap = getattr(args, "bootstrap", False)
+        if not is_bootstrap and (not getattr(args, "plan", None) or not getattr(args, "grant_ref", None)):
+            fail("init requires both an approved plan and grant, or explicit --bootstrap")
+        if not is_bootstrap and not (repo_path / ".git").exists():
             fail("repo must be an existing Git checkout")
-        if not args.grant_ref.strip(): fail("explicit execution grant reference required")
+        elif not repo_path.is_dir():
+            fail("repo must be an existing directory")
+        if not is_bootstrap:
+            plan_path, plan_hash = relative_evidence(root, args.plan)
+            grant_ref = args.grant_ref.strip()
+            if not grant_ref: fail("explicit execution grant reference required")
+            state = "EXECUTING"
+        else:
+            plan_path, plan_hash = None, None
+            grant_ref = None
+            state = "PLANNING"
         conn = sqlite3.connect(str(root / "ledger.sqlite"), timeout=3.0)
         try:
             conn.execute("PRAGMA foreign_keys=ON")
             conn.executescript(SCHEMA)
             conn.execute(f"PRAGMA user_version={VERSION}")
-            conn.execute("INSERT INTO run(id,repo,plan_path,plan_sha,grant_ref,max_workers) VALUES(?,?,?,?,?,?)",
-                         (args.run_id, str(repo_path), plan_path, plan_hash, args.grant_ref, args.max_workers))
+            conn.execute("INSERT INTO run(id,repo,plan_path,plan_sha,grant_ref,max_workers,state) VALUES(?,?,?,?,?,?,?)",
+                         (args.run_id, str(repo_path), plan_path, plan_hash, grant_ref, args.max_workers, state))
             conn.execute("INSERT INTO event(request_id,digest,op,receipt,created) VALUES(?,?,?,?,?)",
-                         ("init:"+args.run_id, "init", "init", f"OK run={args.run_id} schema={VERSION}", stamp()))
+                         ("init:"+args.run_id, "init", "init", f"OK run={args.run_id} schema={VERSION} state={state}", stamp()))
             conn.commit()
-            return f"OK run={args.run_id} schema={VERSION} mode=sqlite-pilot"
+            return f"OK run={args.run_id} schema={VERSION} mode=sqlite state={state}"
         finally:
             conn.close()
     with closing(connect(root, name in ("status", "next", "task-show", "recover", "events", "export"))) as conn:
@@ -528,6 +634,44 @@ def operation(root, args):
                 return f"OK run={run['id']} state=CANCELLED"
             return action(conn,root,name,request,data,act,
                           allowed_states=("CANCELLING","CANCELLATION_BLOCKED"),check_plan=False)
+        if name == "plan-approve":
+            plan_path, plan_hash = relative_evidence(root, args.plan)
+            rat_path, rat_hash = relative_evidence(root, args.rationale)
+            data = dict(plan=plan_path, plan_sha=plan_hash, decision=args.decision_id,
+                        authority=args.authority, actor=args.actor, attestor=args.attestor,
+                        rationale=rat_path, rationale_sha=rat_hash)
+            def act():
+                run = one(conn, "SELECT * FROM run LIMIT 1")
+                if not run: fail("run metadata missing")
+                if not args.actor.strip() or not args.attestor.strip() or args.actor == args.attestor:
+                    fail("plan approval needs distinct decision actor and recorder")
+                gen = run["generation"] + (1 if run["plan_path"] else 0)
+                conn.execute("INSERT INTO decision(id,subject,authority,actor,attestor,disposition,provenance,rationale_path,rationale_sha) VALUES(?,?,?,?,?,?,?,?,?)",
+                             (args.decision_id, "plan", args.authority, args.actor, args.attestor, "APPROVED", "plan-approval", rat_path, rat_hash))
+                conn.execute("UPDATE run SET plan_path=?, plan_sha=?, generation=? WHERE id=?",
+                             (plan_path, plan_hash, gen, run["id"]))
+                return f"OK plan={plan_path} sha={plan_hash} decision={args.decision_id} generation={gen}"
+            return action(conn, root, name, request, data, act, allowed_states=("PLANNING",), check_plan=False)
+        if name == "run-authorize":
+            grant_path, grant_sha = relative_evidence(root, args.grant_ref)
+            data = dict(grant_ref=grant_path, grant_sha=grant_sha, decision=args.decision_id,
+                        actor=args.actor, attestor=args.attestor)
+            def act():
+                run = one(conn, "SELECT * FROM run LIMIT 1")
+                if not run: fail("run metadata missing")
+                if not args.actor.strip() or not args.attestor.strip() or args.actor == args.attestor:
+                    fail("execution grant needs distinct human actor and recorder")
+                if not run["plan_path"] or not run["plan_sha"]:
+                    fail("run has no approved plan; approve plan before authorizing execution")
+                plan = (root / run["plan_path"]).resolve()
+                if not plan.is_file() or fingerprint(plan) != run["plan_sha"]:
+                    fail("approved PLAN.md changed; halt until new authorized generation")
+                conn.execute("INSERT INTO decision(id,subject,authority,actor,attestor,disposition,provenance,rationale_path,rationale_sha) VALUES(?,?,?,?,?,?,?,?,?)",
+                             (args.decision_id, run["id"], "HUMAN", args.actor, args.attestor, "APPROVED", "execution-grant", grant_path, grant_sha))
+                conn.execute("UPDATE run SET grant_ref=?, state='EXECUTING' WHERE id=?",
+                             (grant_path, run["id"]))
+                return f"OK run={run['id']} EXECUTING grant={grant_path} decision={args.decision_id}"
+            return action(conn, root, name, request, data, act, allowed_states=("PLANNING",), check_plan=False)
         if name == "task-add":
             if not TASK.fullmatch(args.task):fail("invalid task ID")
             if (not args.title.strip() or len(args.title)>90 or not args.outcome.strip() or len(args.outcome)>240
@@ -771,6 +915,9 @@ def operation(root, args):
             with closing(connect(root,True)) as read:
                 observed_candidate=get(read,"candidate",args.candidate)
                 same=candidate_identity(observed_candidate)
+            previous = replay(conn,name,request,data)
+            if previous is not None:return previous
+            lock_created=acquire_machine_verification_lock(str(root.resolve()),args.verification,os.getpid())
             def act():
                 c=get(conn,"candidate",args.candidate)
                 if c["state"]!="FROZEN" or c["head"]!=observed_candidate["head"] or not same:
@@ -782,7 +929,12 @@ def operation(root, args):
                 conn.execute("INSERT INTO verification(id,candidate_id,verifier,claim_generation,heavy_generation,gate) VALUES(?,?,?,?,?,?)",
                              (args.verification,args.candidate,args.verifier,gen,heavy,args.gate))
                 return f"OK verification={args.verification} fence={gen} candidate={args.candidate} VERIFY_START-required"
-            return action(conn,root,name,request,data,act)
+            try:
+                return action(conn,root,name,request,data,act)
+            except Exception:
+                if lock_created:
+                    release_machine_verification_lock(str(root.resolve()),args.verification)
+                raise
         if name == "verify-exec":
             v=get(conn,"verification",args.verification)
             c=get(conn,"candidate",v["candidate_id"])
@@ -794,6 +946,9 @@ def operation(root, args):
             if prior:
                 return action(conn,root,name,args.request_id,data,lambda: fail("unexpected verification replay"))
             if v["state"]!="STARTED" or not candidate_identity(c):fail("verification not active at clean candidate")
+            lock_path=machine_lock_path()
+            if not lock_path.is_file():fail("BLOCKED: MACHINE_VERIFICATION_LOCK_MISSING")
+            check_machine_verification_lock(str(root.resolve()),args.verification)
             output=root / "verifications" / (args.verification+".log")
             if output.exists():fail("verification output already exists; reconcile before retry")
             output.parent.mkdir(exist_ok=True)
@@ -836,10 +991,14 @@ def operation(root, args):
                              (state,exit_code,rel,digest,json.dumps(command),args.verification))
                 if state=="STALE":conn.execute("UPDATE candidate SET state='STALE' WHERE id=?",(candidate["id"],))
                 return f"OK verification={args.verification} result={state} candidate={current['candidate_id']}"
-            return action(conn,root,name,request,data,act)
+            result=action(conn,root,name,request,data,act)
+            release_machine_verification_lock(str(root.resolve()),args.verification)
+            return result
         if name == "verify-record":
             path,digest=relative_evidence(root,args.evidence)
             data=dict(verification=args.verification,result=args.result,exit=args.exit_code,evidence=path,hash=digest)
+            previous=replay(conn,name,request,data)
+            if previous is not None:return previous
             with closing(connect(root,True)) as read:
                 previous=get(read,"verification",args.verification)
                 same=candidate_identity(get(read,"candidate",previous["candidate_id"]))
@@ -849,27 +1008,37 @@ def operation(root, args):
                 c=get(conn,"candidate",v["candidate_id"])
                 state="STALE" if not same else args.result
                 if state=="PASS":fail("PASS requires verify-exec captured command result")
+                run_id=one(conn,"SELECT id FROM run LIMIT 1")["id"]
                 release(conn,c["checkout"],args.verification,v["claim_generation"])
                 release(conn,"heavy-local-verification",args.verification,v["heavy_generation"])
                 conn.execute("UPDATE verification SET state=?,exit_code=?,evidence_path=?,evidence_sha=? WHERE id=?",
                              (state,args.exit_code,path,digest,args.verification))
                 if state=="STALE":conn.execute("UPDATE candidate SET state='STALE' WHERE id=?",(c["id"],))
                 return f"OK verification={args.verification} result={state} candidate={v['candidate_id']}"
-            return action(conn,root,name,request,data,act)
+            result=action(conn,root,name,request,data,act)
+            release_machine_verification_lock(str(root.resolve()),args.verification)
+            return result
         if name == "verify-abort":
             data=dict(verification=args.verification,reason=args.reason)
+            previous=replay(conn,name,request,data)
+            if previous is not None:return previous
             def act():
                 v=get(conn,"verification",args.verification)
                 if v["state"]!="STARTED":fail("running or uncertain verification requires process reconciliation")
                 c=get(conn,"candidate",v["candidate_id"])
+                run_id=one(conn,"SELECT id FROM run LIMIT 1")["id"]
                 release(conn,c["checkout"],args.verification,v["claim_generation"])
                 release(conn,"heavy-local-verification",args.verification,v["heavy_generation"])
                 conn.execute("UPDATE verification SET state='INDETERMINATE' WHERE id=?",(args.verification,))
                 return f"OK verification={args.verification} state=INDETERMINATE"
-            return action(conn,root,name,request,data,act,
+            result=action(conn,root,name,request,data,act,
                           allowed_states=("EXECUTING","CANCELLING","CANCELLATION_BLOCKED"),check_plan=False)
+            release_machine_verification_lock(str(root.resolve()),args.verification)
+            return result
         if name == "verify-reconcile":
             data=dict(verification=args.verification,reason=args.reason)
+            previous=replay(conn,name,request,data)
+            if previous is not None:return previous
             def require_stopped(v):
                 if v["state"] not in ("RUNNING","UNCERTAIN"):
                     fail(f"only running or uncertain verification can be reconciled; current state is {v['state']}")
@@ -888,13 +1057,16 @@ def operation(root, args):
                 if not output.exists():
                     output.write_bytes(f"--- verification reconciled: {args.reason} ---\n".encode("utf-8"))
                 rel,digest=relative_evidence(root,output.relative_to(root).as_posix())
+                run_id=one(conn,"SELECT id FROM run LIMIT 1")["id"]
                 release(conn,c["checkout"],args.verification,v["claim_generation"])
                 release(conn,"heavy-local-verification",args.verification,v["heavy_generation"])
                 conn.execute("UPDATE verification SET state='INDETERMINATE',exit_code=NULL,evidence_path=?,evidence_sha=? WHERE id=?",
                              (rel,digest,args.verification))
                 return f"OK verification={args.verification} state=INDETERMINATE reconciled=true claims-released"
-            return action(conn,root,name,request,data,act,
+            result=action(conn,root,name,request,data,act,
                           allowed_states=("EXECUTING","CANCELLING","CANCELLATION_BLOCKED"),check_plan=False)
+            release_machine_verification_lock(str(root.resolve()),args.verification)
+            return result
         if name == "task-accept":
             data=dict(task=args.task,candidate=args.candidate,decision=args.decision_id)
             with closing(connect(root,True)) as read:
@@ -960,7 +1132,13 @@ def parser():
         q=sub.add_parser(name)
         for arg,kwargs in keys.items():q.add_argument("--"+arg.replace("_","-"),**kwargs)
         return q
-    add("init",run_id=dict(required=True),repo=dict(required=True),plan=dict(required=True),grant_ref=dict(required=True),max_workers=dict(type=int,default=1)).add_argument("--parallel-approved",action="store_true")
+    init_cmd = add("init",run_id=dict(required=True),repo=dict(required=True),max_workers=dict(type=int,default=1))
+    init_cmd.add_argument("--plan",default=None)
+    init_cmd.add_argument("--grant-ref",default=None)
+    init_cmd.add_argument("--parallel-approved",action="store_true")
+    init_cmd.add_argument("--bootstrap",action="store_true")
+    add("plan-approve",plan=dict(required=True),decision_id=dict(required=True),authority=dict(required=True,choices=["MANAGER","HUMAN"]),actor=dict(required=True),attestor=dict(required=True),rationale=dict(required=True),request_id=dict(required=True))
+    add("run-authorize",grant_ref=dict(required=True),decision_id=dict(required=True),actor=dict(required=True),attestor=dict(required=True),request_id=dict(required=True))
     add("upgrade")
     add("run-cancel",decision_id=dict(required=True),actor=dict(required=True),attestor=dict(required=True),authority_source=dict(required=True),reason=dict(required=True),request_id=dict(required=True))
     add("cancel-block",evidence=dict(required=True),request_id=dict(required=True))

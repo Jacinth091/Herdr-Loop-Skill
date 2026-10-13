@@ -32,7 +32,7 @@ flowchart TD
 1. **Separation of Concerns:** Governed Workers write code but never execute tests. A standalone Worker may run bounded, authorized self-checks and must label them self-verification. Verifiers execute independent checks but never edit code. Critics perform read-only reviews. Managers make architectural and acceptance decisions.
 2. **Real Herdr Panes:** Governed Workers must be registered in Herdr panes. A direct standalone assignment in an existing CLI does not need Herdr. Native Codex subagents (`spawn_agent`, agent teams) are strictly forbidden.
 3. **Candidate Fencing:** Before running tests, the integration checkout is frozen. Any subsequent modification invalidates ongoing verification.
-4. **Serial Heavy Verification Lock:** At most **one** memory-heavy local test or build process may run at any time within the run database scope (enforced via SQLite `heavy-local-verification` claim in pilot runs; advisory in standard `SESSION.md` runs). Across independent run databases, operators must coordinate workloads manually.
+4. **Serial Heavy Verification Lock:** SQLite pilot checks use a per-run claim and an exclusive machine lock. Standard `SESSION.md` runs still coordinate serial checks manually; their advisory state does not participate in the SQLite lock.
 
 ### Standalone Worker assignment
 
@@ -55,7 +55,7 @@ For access recovery, classify the exact boundary first. A same-scope command blo
 - **File:** `<repo>/.herdr-loop/<run-id>/ledger.sqlite`.
 - **Tool:** `skills/herdr-engineering-loop/scripts/herdr_ledger.py`.
 - **Purpose:** Evaluates eliminating context window amplification (e.g. 130KB+ `SESSION.md` logs) through deterministic transactional CLI state transitions.
-- **Mutual Exclusion:** Routine role binding (`tools/role_bind.py`) fails closed if configured with `state_backend: "sqlite"` to prevent half-initialized runs. The SQLite ledger CLI is invoked explicitly for isolated offline pilot testing.
+- **Mutual Exclusion:** Routine role binding defaults to Markdown. Explicit SQLite binding creates a planning-only ledger; `tools/activate_roles.py` blocks live activation and `run_backend.py switch` blocks transfer until their safety gates pass.
 
 ---
 

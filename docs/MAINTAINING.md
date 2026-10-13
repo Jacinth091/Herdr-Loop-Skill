@@ -47,8 +47,8 @@ When modifying any skill or script, you must preserve these architectural invari
 
 1. **No Codex Internal Subagents:**  
    Never allow Codex's native `spawn_agent`, agent teams, or background threads to replace Herdr-visible workers. All workers must run inside registered Herdr panes with verified process identity.
-2. **Worker Test-Execution Ban:**  
-   `herdr-worker` must never execute test suites, linters, builds, or package managers. Testing is exclusively reserved for the Delegator or a dedicated `herdr-verifier`.
+2. **Governed Worker Test-Execution Ban:**
+   A Worker in a governed run must never execute test suites, linters, builds, or package managers. A direct standalone Worker may run bounded, authorized self-checks and must label them self-verification; independent testing remains with the Delegator or a dedicated `herdr-verifier`.
 3. **Serial Heavy Verification Lock:**  
    Only **one** expensive local verification command may execute across the machine at any time. Verification commands must acquire the run lock (`active_verification_lock`) before execution.
 4. **Git Candidate Fencing & Provenance:**  
@@ -56,7 +56,7 @@ When modifying any skill or script, you must preserve these architectural invari
 5. **Decoupled Human Progress:**  
    Machine IDs (`T01`, `T01-A2`, Herdr pane IDs) must never be presented as the primary status to human operators. Always use descriptive slice titles and observable outcomes.
 6. **Dual Backend Mutual Exclusion:**  
-   Live runs use Delegator-owned `SESSION.md`. The `ledger.sqlite` engine is an offline CLI pilot only: `tools/role_bind.py` refuses `state_backend: "sqlite"`. The two backends must never operate on the same run.
+   Live runs use Delegator-owned `SESSION.md`. Explicit SQLite binding creates a planning-only candidate; activation and transfer remain gated. The two backends must never operate on the same run.
 7. **Safe Cancellation & Recovery:**  
    Cancellation must stop future scheduling, observe actual process termination via Herdr CLI, and preserve dirty worktrees and human-owned panes.
 

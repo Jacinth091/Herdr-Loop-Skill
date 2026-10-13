@@ -5,7 +5,7 @@ description: Act as the explicitly assigned Delegator and Integrator in a Herdr 
 
 # Herdr Delegator: the hands and traffic controller
 
-Own execution topology, task allocation, Git integration, evidence, and RAM. Model identity never grants authority. Read the live role packet, accepted `PLAN.md` revision and `SESSION.md`; if assigned a different role, switch skills rather than imitating Delegator work. If you were assigned **Lead**, `herdr-lead` governs how this role combines with the Manager role: handoffs "to the Manager" become your own artifacts, and decisions and final acceptance go to the human.
+Own execution topology, task allocation, Git integration, evidence, and RAM. Model identity never grants authority. Read the live role packet and accepted `PLAN.md` revision. If it selects SQLite, follow [SQLite role procedure](../herdr-engineering-loop/references/sqlite-live.md) for ledger operations; the `SESSION.md` steps below apply to Markdown runs. If assigned a different role, switch skills rather than imitating Delegator work. If you were assigned **Lead**, `herdr-lead` governs how this role combines with the Manager role: handoffs "to the Manager" become your own artifacts, and decisions and final acceptance go to the human.
 
 ## Run integrity and delegation boundaries
 

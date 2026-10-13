@@ -1,6 +1,6 @@
 ---
 name: herdr-engineering-loop
-description: Bootstrap, coordinate, inspect, and recover human-directed multi-agent engineering workflows inside Herdr. Use for session setup, workspace provisioning, role packet binding (Manager, Delegator, Worker, Verifier, Critic), dual-backend state management (Markdown live authority or ACID SQLite offline pilot), serial verification locks, model launch routing, and fail-closed crash recovery.
+description: Bootstrap, coordinate, inspect, and recover human-directed multi-agent engineering workflows inside Herdr. Use for session setup, workspace provisioning, role packet binding (Manager, Delegator, Worker, Verifier, Critic), Markdown live state or a planning-only SQLite candidate, serial verification locks, model launch routing, and fail-closed crash recovery.
 ---
 
 # Herdr Engineering Loop: Session Controller Guide
@@ -74,13 +74,14 @@ Herdr Role Pack v2.8 maintains single live authority while providing an isolated
 - **Verification Lock:** Serial heavy verification lock is an advisory coordination invariant tracked in `SESSION.md`.
 - **Constraint:** Do not initialize `ledger.sqlite` in a Markdown-backed live run.
 
-### Isolated Offline Engine: Transactional SQLite Ledger (`scripts/herdr_ledger.py`, Offline Pilot Only)
+### Planning-only SQLite candidate (`scripts/herdr_ledger.py`)
 - **Primary Database:** `<repo>/.herdr-loop/<run-id>/ledger.sqlite`.
 - **Ownership:** Deterministic CLI commands via `scripts/herdr_ledger.py`.
-- **Reference Contract:** Follow [SQLite Ledger Pilot](references/sqlite-ledger-pilot.md) for detailed schema v2 transitions, atomic claim fences, and receipt requirements.
+- **Reference Contract:** Follow [SQLite Ledger Pilot](references/sqlite-ledger-pilot.md) for typed transitions, atomic claim fences, and receipt requirements.
 - **Use Case:** Isolated offline CLI evaluation, token-efficient benchmarking, and automated state transition validation.
-- **Verification Lock:** Heavy verification lock is enforced via per-run SQLite ledger table `active_verification_lock`.
-- **Constraint:** Live runs strictly reject SQLite. `tools/role_bind.py` explicitly fails closed (`SQLITE_BACKEND_NOT_LIVE`) if configured with `state_backend: "sqlite"`.
+- **Verification Lock:** The CLI uses a per-run claim and an exclusive machine lock during offline checks.
+- **Constraint:** Explicit SQLite binding creates a `PLANNING` ledger; `tools/activate_roles.py` rejects live activation (`SQLITE_BACKEND_NOT_LIVE`). Backend transfer is still unavailable. Keep Markdown as the live default until the Windows lifecycle and transfer gates pass.
+- **Candidate procedure:** Read [SQLite role procedure](references/sqlite-live.md) when inspecting an explicitly selected SQLite run.
 
 ---
 

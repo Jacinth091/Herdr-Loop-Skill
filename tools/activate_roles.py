@@ -18,7 +18,11 @@ import tempfile
 TOOLS_DIR = Path(__file__).resolve().parent
 if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
+SCRIPTS_DIR = TOOLS_DIR.parent / "skills" / "herdr-engineering-loop" / "scripts"
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
 import access_probe
+import run_backend
 
 ALLOWED = {"manager", "delegator", "lead", "worker", "verifier", "critic"}
 RECEIPTS_START = "<!-- HERDR_ACTIVATION_RECEIPTS_START -->"
@@ -173,6 +177,7 @@ def main(argv=None):
     p.add_argument("--roles", default="manager,delegator,lead", help="Comma-separated roles to activate, or all (default: the run leaders)")
     p.add_argument("--dry-run", action="store_true", help="Print prompts without invoking Herdr or writing receipts")
     args = p.parse_args(argv)
+    held_lock = None
     try:
         run_dir = args.run_dir.expanduser().resolve(strict=True)
         manifest = json.loads((run_dir / "ACTIVATION.json").read_text(encoding="utf-8"))
@@ -180,6 +185,18 @@ def main(argv=None):
             raise ValueError("Activation manifest was not created by Herdr Role Pack")
         if manifest.get("execution_mode", "governed") == "standalone":
             raise ValueError("Standalone assignment is delivered directly from ACTIVATE.md; managed activation requires a governed run and ledger")
+        if not args.dry_run:
+            lock = run_backend.run_lock(run_dir)
+            lock.__enter__()
+            held_lock = lock
+            manifest = json.loads((run_dir / "ACTIVATION.json").read_text(encoding="utf-8"))
+        if manifest.get("generated_by") != "herdr-role-pack":
+            raise ValueError("Activation manifest was not created by Herdr Role Pack")
+        backend, selector = run_backend.get_active_backend(run_dir)
+        if manifest.get("state_backend", "markdown") != backend or manifest.get("backend_epoch", 1) != (selector["epoch"] if selector else 1):
+            raise ValueError("BACKEND_INTEGRITY_BLOCKED: activation packet does not match selected backend and epoch")
+        if manifest.get("state_backend") == "sqlite" and not args.dry_run:
+            raise ValueError("SQLITE_BACKEND_NOT_LIVE: role lifecycle and Windows Herdr tracer are not verified; activation is gated")
         requested = ALLOWED if args.roles == "all" else set(args.roles.split(","))
         if not requested or not requested <= ALLOWED:
             raise ValueError("--roles must contain only manager,delegator,lead,worker,verifier,critic or all")
@@ -210,6 +227,8 @@ def main(argv=None):
             return 0
         if os.environ.get("HERDR_ENV") != "1":
             raise ValueError("HERDR_ENV=1 required; run from an existing Herdr-managed pane")
+        if backend != "markdown":
+            raise ValueError("No live receipt writer is available for the selected backend")
         session_path = run_dir / "SESSION.md"
         _, receipts, _ = _read_receipts(session_path)
         if not receipts and RECEIPTS_START not in session_path.read_text(encoding="utf-8"):
@@ -297,6 +316,9 @@ def main(argv=None):
         message = getattr(exc, "strerror", None) or str(exc)
         print("ERROR", access_probe.sanitize_error(message), file=sys.stderr)
         return 2
+    finally:
+        if held_lock is not None:
+            held_lock.__exit__(None, None, None)
 
 
 if __name__ == "__main__":

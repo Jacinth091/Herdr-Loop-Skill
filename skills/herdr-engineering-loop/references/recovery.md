@@ -16,7 +16,7 @@ Do not restart work blindly after a terminal crash, power outage, exhausted mode
 
 Reconcile the Worker-local `READY.md`, `REPORT.md`, `ROLE.md` recipient, and observed Herdr agent name/pane with the ledger before reactivating. A new agent process must repeat `ROLE_READY`. Preserve task-progress commits even if the signal never reached the Delegator. Record a missing or failed event as `SIGNAL_TRANSPORT_UNAVAILABLE`, not completion. If a worker was not acknowledged/start-authorized, do not consider its edits eligible for integration without explicit Manager/human reconciliation. See [Signal and Receipt Contract](signals.md) and [Access-Denied Preflight](access-triage.md).
 
-For `Access is denied`, isolate the exact failing resource (Herdr socket, worktree, Agy/Codex sandbox, Docker pipe, WSL, unrelated OS file). Never treat access denied as a blanket request for admin, disabled sandbox or widened ACL. Pause the affected role; keep others running only if independent and safe.
+For `Access is denied`, isolate the exact failing resource (Herdr socket, worktree, Agy/Codex sandbox, Docker pipe, WSL, unrelated OS file). For the same authorized in-scope command blocked only by the current harness, request permission through that agent's own tool when it offers native approval, then verify the postcondition. Explicit denials, OS restrictions and unavailable approval remain blockers. Never request admin, disable a sandbox or widen ACLs; keep unrelated roles running only if independent and safe.
 
 ## Escalation rules
 
