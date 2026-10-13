@@ -20,6 +20,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
+$packVersion = (Get-Content -Raw -LiteralPath (Join-Path $root 'manifest.json') | ConvertFrom-Json).version
 $skillNames = @{
   Controller = 'herdr-engineering-loop'
   Manager = 'herdr-manager'
@@ -62,7 +63,7 @@ function Install-PackSkill {
   try {
     New-Item -ItemType Directory -Path $stage -Force | Out-Null
     Copy-Item -LiteralPath $Source -Destination $stagedSkill -Recurse -Force
-    Set-Content -LiteralPath (Join-Path $stagedSkill '.herdr-role-pack-managed') -Value 'Herdr Role Pack v2.8' -Encoding UTF8
+    Set-Content -LiteralPath (Join-Path $stagedSkill '.herdr-role-pack-managed') -Value "Herdr Role Pack v$packVersion" -Encoding UTF8
     if ($exists) { Move-Item -LiteralPath $target -Destination $oldCopy }
     try {
       Move-Item -LiteralPath $stagedSkill -Destination $target

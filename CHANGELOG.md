@@ -7,6 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Fixed
+- Installers write the real pack version (from `manifest.json`) into each managed skill's marker instead of a hardcoded `v2.8`.
+- `tools/update.py` compares installed versions with the latest release: reports "Up to date" and does nothing unless `--force` is given.
+
 ### Planned
 - Native Herdr Signals and Relay transport evaluation once upstream becomes available.
 - Extended token billing metrics comparison between Markdown and SQLite state backends.

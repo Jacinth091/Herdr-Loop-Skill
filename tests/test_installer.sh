@@ -12,6 +12,7 @@ for dir in "$HOME/.claude/skills" "$HOME/.agents/skills" "$HOME/.gemini/antigrav
   test -f "$dir/herdr-critic/SKILL.md"
   test ! -e "$dir/herdr-verifier"
   test -f "$dir/herdr-worker/.herdr-role-pack-managed"
+  grep -qF "Herdr Role Pack v$(sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' "$ROOT/manifest.json" | head -n 1)" "$dir/herdr-worker/.herdr-role-pack-managed"
 done
 sh "$ROOT/install.sh" --agents claude,codex,agy --roles manager,worker,critic > "$TMP/second.txt"
 grep -q 'SKIP already installed' "$TMP/second.txt"

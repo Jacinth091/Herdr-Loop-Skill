@@ -18,6 +18,7 @@ const os = require('node:os');
 const { execFileSync } = require('node:child_process');
 
 const ROOT = path.resolve(__dirname, '..');
+const VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'manifest.json'), 'utf8')).version;
 const SKILL_NAMES = {
   controller: 'herdr-engineering-loop',
   'engineering-loop': 'herdr-engineering-loop',
@@ -203,7 +204,7 @@ function installSkill({ source, baseDir, skillName, options }) {
 
   try {
     copyDirRecursive(source, stagedSkill);
-    fs.writeFileSync(path.join(stagedSkill, '.herdr-role-pack-managed'), 'Herdr Role Pack v2.8\n', 'utf8');
+    fs.writeFileSync(path.join(stagedSkill, '.herdr-role-pack-managed'), `Herdr Role Pack v${VERSION}\n`, 'utf8');
 
     if (exists) {
       fs.renameSync(target, backupDir);
