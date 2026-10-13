@@ -341,7 +341,7 @@ class RolePackTests(unittest.TestCase):
         result = self.bind()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(dirty.read_bytes(), before)
-        self.assertIn(str(self.repo), (run / "role-packets" / "solo_worker.md").read_text(encoding="utf8"))
+        self.assertIn(str(self.repo.resolve()), (run / "role-packets" / "solo_worker.md").read_text(encoding="utf8"))
 
     def test_standalone_rejects_governed_run_id_reuse(self):
         self.assertEqual(self.bind().returncode, 0)
