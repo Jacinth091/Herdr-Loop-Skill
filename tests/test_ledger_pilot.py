@@ -247,27 +247,43 @@ class LedgerPilotTests(unittest.TestCase):
 
     def test_interrupted_verification_holds_global_lock(self):
         self.verifying()
-        real_run=ledger.subprocess.run
-        def interrupted(argv,*args,**kwargs):
-            if argv and argv[0]==sys.executable:
-                raise OSError('simulated launch ambiguity')
-            return real_run(argv,*args,**kwargs)
-        with mock.patch.object(ledger.subprocess,'run',side_effect=interrupted):
-            with self.assertRaisesRegex(OSError,'simulated launch ambiguity'):
-                self.cmd('verify-exec','--verification','V01','--request-id','interrupted','--',
-                         sys.executable,'-c','print("pass")')
-        self.assertIn('lock-held',self.cmd('recover'))
-        self.assertIn('requires process reconciliation',self.cmd('verify-abort','--verification','V01',
-            '--reason','uncertain process','--request-id','abort1',ok=False))
+        real_popen = subprocess.Popen
+        def popen_side_effect(argv, *args, **kwargs):
+            if argv and argv[0] == sys.executable:
+                m = mock.MagicMock()
+                m.pid = 99999
+                m.communicate.side_effect = OSError('simulated execution ambiguity')
+                return m
+            return real_popen(argv, *args, **kwargs)
+
+        with mock.patch.object(ledger.subprocess, 'Popen', side_effect=popen_side_effect):
+            with self.assertRaisesRegex(OSError, 'simulated execution ambiguity'):
+                self.cmd('verify-exec', '--verification', 'V01', '--request-id', 'interrupted', '--',
+                         sys.executable, '-c', 'print("pass")')
+        self.assertIn('lock-held', self.cmd('recover'))
+        self.assertIn('requires process reconciliation', self.cmd('verify-abort', '--verification', 'V01',
+            '--reason', 'uncertain process', '--request-id', 'abort1', ok=False))
         with closing(sqlite3.connect(self.run_dir/'ledger.sqlite')) as db:
-            self.assertEqual('RUNNING',db.execute("SELECT state FROM verification WHERE id='V01'").fetchone()[0])
-            self.assertEqual(1,db.execute("SELECT active FROM claim WHERE resource='heavy-local-verification'").fetchone()[0])
-        recon = self.cmd('verify-reconcile', '--verification', 'V01', '--reason', 'process confirmed dead', '--request-id', 'reconcile1')
-        self.assertIn('reconciled=true', recon)
-        self.assertIn('claims-released', recon)
-        with closing(sqlite3.connect(self.run_dir/'ledger.sqlite')) as db:
-            self.assertEqual('INDETERMINATE',db.execute("SELECT state FROM verification WHERE id='V01'").fetchone()[0])
-            self.assertEqual(0,db.execute("SELECT active FROM claim WHERE resource='heavy-local-verification'").fetchone()[0])
+            self.assertEqual('RUNNING', db.execute("SELECT state FROM verification WHERE id='V01'").fetchone()[0])
+            self.assertEqual(1, db.execute("SELECT active FROM claim WHERE resource='heavy-local-verification'").fetchone()[0])
+            self.assertEqual(99999, db.execute("SELECT process_pid FROM verification WHERE id='V01'").fetchone()[0])
+
+        # 1. While process is reported ALIVE -> verify-reconcile must be REFUSED and lock kept
+        with mock.patch.object(ledger, 'is_pid_alive', return_value=True):
+            recon_fail = self.cmd('verify-reconcile', '--verification', 'V01', '--reason', 'trying to kill', '--request-id', 'rec-fail', ok=False)
+            self.assertIn('still running', recon_fail)
+            with closing(sqlite3.connect(self.run_dir/'ledger.sqlite')) as db:
+                self.assertEqual('RUNNING', db.execute("SELECT state FROM verification WHERE id='V01'").fetchone()[0])
+                self.assertEqual(1, db.execute("SELECT active FROM claim WHERE resource='heavy-local-verification'").fetchone()[0])
+
+        # 2. When process is confirmed DEAD -> verify-reconcile SUCCEEDS and releases claims
+        with mock.patch.object(ledger, 'is_pid_alive', return_value=False):
+            recon = self.cmd('verify-reconcile', '--verification', 'V01', '--reason', 'process confirmed dead', '--request-id', 'reconcile1')
+            self.assertIn('reconciled=true', recon)
+            self.assertIn('claims-released', recon)
+            with closing(sqlite3.connect(self.run_dir/'ledger.sqlite')) as db:
+                self.assertEqual('INDETERMINATE', db.execute("SELECT state FROM verification WHERE id='V01'").fetchone()[0])
+                self.assertEqual(0, db.execute("SELECT active FROM claim WHERE resource='heavy-local-verification'").fetchone()[0])
 
     def test_unauthorized_evidence_path_rejected(self):
         self.init(); self.task()

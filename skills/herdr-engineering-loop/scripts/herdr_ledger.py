@@ -43,7 +43,7 @@ CREATE TABLE candidate(id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tas
 CREATE TABLE verification(id TEXT PRIMARY KEY, candidate_id TEXT NOT NULL REFERENCES candidate(id),
  verifier TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'STARTED',
  evidence_path TEXT, evidence_sha TEXT, exit_code INTEGER, claim_generation INTEGER NOT NULL,
- heavy_generation INTEGER NOT NULL, gate TEXT NOT NULL, command TEXT);
+ heavy_generation INTEGER NOT NULL, gate TEXT NOT NULL, command TEXT, process_pid INTEGER);
 CREATE TABLE decision(id TEXT PRIMARY KEY, subject TEXT NOT NULL, authority TEXT NOT NULL,
  actor TEXT NOT NULL, attestor TEXT NOT NULL, disposition TEXT NOT NULL, provenance TEXT NOT NULL,
  rationale_path TEXT, rationale_sha TEXT);
@@ -138,6 +138,11 @@ def connect(root, read_only=False):
     if version != VERSION:
         conn.close()
         fail("ledger schema is not v2; use explicit upgrade for v1, reject unknown versions")
+    if not read_only:
+        try:
+            conn.execute("ALTER TABLE verification ADD COLUMN process_pid INTEGER")
+        except sqlite3.OperationalError:
+            pass
     return conn
 
 
@@ -171,6 +176,7 @@ def upgrade(root):
                 "ALTER TABLE verification ADD COLUMN heavy_generation INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE verification ADD COLUMN gate TEXT NOT NULL DEFAULT 'legacy-unverified'",
                 "ALTER TABLE verification ADD COLUMN command TEXT",
+                "ALTER TABLE verification ADD COLUMN process_pid INTEGER",
                 "CREATE TABLE decision(id TEXT PRIMARY KEY, subject TEXT NOT NULL, authority TEXT NOT NULL, actor TEXT NOT NULL, attestor TEXT NOT NULL, disposition TEXT NOT NULL, provenance TEXT NOT NULL, rationale_path TEXT, rationale_sha TEXT)",
                 "CREATE TABLE critique(id TEXT PRIMARY KEY, candidate_id TEXT NOT NULL REFERENCES candidate(id), critic TEXT NOT NULL, report_path TEXT NOT NULL, report_sha TEXT NOT NULL)",
                 "CREATE TABLE finding(id TEXT PRIMARY KEY, candidate_id TEXT NOT NULL REFERENCES candidate(id), review_id TEXT NOT NULL REFERENCES critique(id), actor TEXT NOT NULL, severity TEXT NOT NULL, disposition TEXT NOT NULL, evidence_path TEXT NOT NULL, evidence_sha TEXT NOT NULL)",
@@ -249,6 +255,32 @@ def observe_stopped(pane, pid):
             fail("UNCERTAIN: observed agent process still present")
         return f"Herdr pane={pane} pid={pid} absent"
     return f"Herdr pane={pane} closed and pid={pid} absent"
+
+
+def is_pid_alive(pid):
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    if sys.platform == "win32":
+        import ctypes
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            return False
+        try:
+            exit_code = ctypes.c_ulong()
+            if kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                return exit_code.value == STILL_ACTIVE
+            return False
+        finally:
+            kernel32.CloseHandle(handle)
+    else:
+        try:
+            os.kill(pid, 0)
+            return True
+        except (ProcessLookupError, OSError):
+            return False
 
 
 def observe_unstarted(name):
@@ -765,19 +797,26 @@ def operation(root, args):
             output=root / "verifications" / (args.verification+".log")
             if output.exists():fail("verification output already exists; reconcile before retry")
             output.parent.mkdir(exist_ok=True)
+            proc = subprocess.Popen(command, cwd=c["checkout"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            pid = proc.pid
             def begin():
-                if get(conn,"verification",args.verification)["state"]!="STARTED":fail("verification already executing")
-                conn.execute("UPDATE verification SET state='RUNNING',command=? WHERE id=?",(json.dumps(command),args.verification))
-                return f"OK verification={args.verification} RUNNING"
+                if get(conn,"verification",args.verification)["state"]!="STARTED":
+                    proc.kill()
+                    fail("verification already executing")
+                conn.execute("UPDATE verification SET state='RUNNING',command=?,process_pid=? WHERE id=?",
+                             (json.dumps(command),pid,args.verification))
+                return f"OK verification={args.verification} RUNNING pid={pid}"
             begin_id="begin_"+hashlib.sha256(args.request_id.encode()).hexdigest()
             action(conn,root,"verify-exec-begin",begin_id,data,begin)
             try:
-                result=subprocess.run(command,cwd=c["checkout"],capture_output=True,timeout=args.timeout,check=False)
-                exit_code=result.returncode
-                raw=result.stdout+b"\n--- stderr ---\n"+result.stderr
-            except subprocess.TimeoutExpired as exc:
-                exit_code=None
-                raw=(exc.stdout or b"")+b"\n--- timeout ---\n"+(exc.stderr or b"")
+                stdout, stderr = proc.communicate(timeout=args.timeout)
+                exit_code = proc.returncode
+                raw = (stdout or b"") + b"\n--- stderr ---\n" + (stderr or b"")
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                stdout, stderr = proc.communicate()
+                exit_code = None
+                raw = (stdout or b"") + b"\n--- timeout ---\n" + (stderr or b"")
             if len(raw)>1_000_000:
                 raw=raw[:1_000_000]+b"\n--- output truncated; result indeterminate ---\n"
                 exit_code=None
@@ -828,10 +867,20 @@ def operation(root, args):
                           allowed_states=("EXECUTING","CANCELLING","CANCELLATION_BLOCKED"),check_plan=False)
         if name == "verify-reconcile":
             data=dict(verification=args.verification,reason=args.reason)
+            with closing(connect(root, True)) as read:
+                v = get(read, "verification", args.verification)
+                if v["state"] not in ("RUNNING", "UNCERTAIN"):
+                    fail(f"only running or uncertain verification can be reconciled; current state is {v['state']}")
+                pid = v["process_pid"] if "process_pid" in v.keys() else None
+                if pid and is_pid_alive(pid):
+                    fail(f"UNCERTAIN: verification process {pid} still running; cannot release claims")
             def act():
                 v=get(conn,"verification",args.verification)
                 if v["state"] not in ("RUNNING","UNCERTAIN"):
                     fail(f"only running or uncertain verification can be reconciled; current state is {v['state']}")
+                pid = v["process_pid"] if "process_pid" in v.keys() else None
+                if pid and is_pid_alive(pid):
+                    fail(f"UNCERTAIN: verification process {pid} still running; cannot release claims")
                 c=get(conn,"candidate",v["candidate_id"])
                 output=root / "verifications" / (args.verification+".log")
                 if not output.exists():

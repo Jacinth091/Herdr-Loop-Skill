@@ -253,6 +253,21 @@ function main() {
       }
       plan.push({ agent, baseDir, skillName, source, target, exists, managed });
     }
+
+    if (options.withHerdr) {
+      const skillName = 'herdr';
+      const source = path.join(ROOT, 'skills', skillName);
+      const target = path.join(baseDir, skillName);
+      const marker = path.join(target, '.herdr-role-pack-managed');
+      const exists = fs.existsSync(target);
+      const managed = fs.existsSync(marker);
+
+      if (!options.uninstall && exists && !managed) {
+        console.error(`Error: REFUSE unmanaged existing directory: ${target}`);
+        process.exit(1);
+      }
+      plan.push({ agent, baseDir, skillName, source, target, exists, managed, isHerdr: true });
+    }
   }
 
   // Pre-install backup for multi-skill rollback on failure
@@ -271,32 +286,35 @@ function main() {
 
   try {
     for (const item of plan) {
-      installSkill({ source: item.source, baseDir: item.baseDir, skillName: item.skillName, options });
-    }
-
-    if (options.withHerdr) {
-      for (const agent of selectedAgents) {
-        const baseDir = agentDirs[agent];
-        const targetHerdr = path.join(baseDir, 'herdr');
+      if (item.isHerdr) {
         if (options.uninstall) {
-          installSkill({ source: path.join(ROOT, 'skills', 'herdr'), baseDir, skillName: 'herdr', options });
+          installSkill({ source: item.source, baseDir: item.baseDir, skillName: 'herdr', options });
         } else if (options.dryRun) {
-          console.log(`INSTALL official herdr skill from 'herdr --skill' -> ${targetHerdr}`);
+          console.log(`INSTALL official herdr skill from 'herdr --skill' -> ${item.target}`);
         } else {
+          let herdrSource = item.source;
+          let tempDir = null;
           try {
             const herdrOutput = execFileSync('herdr', ['--skill'], { encoding: 'utf8', timeout: 5000 });
             if (herdrOutput && herdrOutput.startsWith('---')) {
-              const tempDir = path.join(os.tmpdir(), `herdr-official-${Date.now()}`);
+              tempDir = path.join(os.tmpdir(), `herdr-official-${Date.now()}`);
               const tempSkillDir = path.join(tempDir, 'herdr');
               fs.mkdirSync(tempSkillDir, { recursive: true });
               fs.writeFileSync(path.join(tempSkillDir, 'SKILL.md'), herdrOutput);
-              installSkill({ source: tempSkillDir, baseDir, skillName: 'herdr', options });
-              fs.rmSync(tempDir, { recursive: true, force: true });
+              herdrSource = tempSkillDir;
             }
           } catch {
-            console.log(`SKIP official herdr skill: 'herdr --skill' unavailable`);
+            console.log(`INFO: 'herdr --skill' unavailable; using bundled herdr skill`);
+          }
+          if (fs.existsSync(path.join(herdrSource, 'SKILL.md'))) {
+            installSkill({ source: herdrSource, baseDir: item.baseDir, skillName: 'herdr', options });
+          }
+          if (tempDir && fs.existsSync(tempDir)) {
+            fs.rmSync(tempDir, { recursive: true, force: true });
           }
         }
+      } else {
+        installSkill({ source: item.source, baseDir: item.baseDir, skillName: item.skillName, options });
       }
     }
   } catch (err) {
@@ -305,11 +323,17 @@ function main() {
       console.error(`Rolling back to previous installation from ${backupDir}...`);
       for (const item of plan) {
         const itemBackup = path.join(backupDir, item.agent, item.skillName);
-        if (fs.existsSync(itemBackup)) {
+        if (item.exists && item.managed && fs.existsSync(itemBackup)) {
           if (fs.existsSync(item.target)) {
             fs.rmSync(item.target, { recursive: true, force: true });
           }
           copyDirRecursive(itemBackup, item.target);
+        } else if (!item.exists && fs.existsSync(item.target)) {
+          const marker = path.join(item.target, '.herdr-role-pack-managed');
+          if (fs.existsSync(marker)) {
+            fs.rmSync(item.target, { recursive: true, force: true });
+            console.error(`Removed newly created slot: ${item.target}`);
+          }
         }
       }
       console.error('Rollback completed.');

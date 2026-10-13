@@ -98,6 +98,6 @@ sh ./install.sh --dry-run
 
 ## 4. Versioning Policy
 
-- **Single Canonical Version:** The package version is declared in [manifest.json](file:///C:/Users/PCC/Desktop/My%20Projects/Herdr%20Skill/manifest.json) and mirrored in [package.json](file:///C:/Users/PCC/Desktop/My%20Projects/Herdr%20Skill/package.json).
+- **Single Canonical Version:** The package version is declared in [manifest.json](../manifest.json) and mirrored in [package.json](../package.json).
 - **Conventional Commits:** Ordinary Git commits should use conventional commit subjects (e.g. `feat: ...`, `fix: ...`, `docs: ...`). **Do not create pseudo-version bumps for routine commits.**
-- **Releases are Explicit:** Published releases are created only via annotated Git tags (`vX.Y.Z`) on reviewed commits. See [RELEASING.md](file:///C:/Users/PCC/Desktop/My%20Projects/Herdr%20Skill/docs/RELEASING.md) for full instructions.
+- **Releases are Explicit:** Published releases are created only via annotated Git tags (`vX.Y.Z`) on reviewed commits. See [RELEASING.md](RELEASING.md) for full instructions.

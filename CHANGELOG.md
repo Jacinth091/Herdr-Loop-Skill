@@ -22,7 +22,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - **Safe Explicit Updater:** Added `tools/update.py` for checking GitHub Releases, verifying asset checksums, creating pre-update backups in `~/.herdr-backups/`, and providing one-command rollback (`--rollback latest`).
 - **Continuous Integration & Tag-Gated Releases:** Added `.github/workflows/ci.yml` (multi-OS testing on Ubuntu and Windows) and `.github/workflows/release.yml` (tag-gated publishing with version validation).
 - **Cross-Platform Node.js Installer:** Added `bin/install.js` and `package.json` enabling one-command installation via `npx .` with atomic staging and rollback.
-- **Transactional SQLite Ledger (Schema v2):** Added deterministic ACID state engine in `skills/herdr-engineering-loop/scripts/herdr_ledger.py` for opt-in token-efficient runs (`state_backend: "sqlite"`).
+- **Transactional SQLite Ledger (Schema v2):** Added deterministic ACID state engine in `skills/herdr-engineering-loop/scripts/herdr_ledger.py` for offline evaluation and inspection; routine live runs use Markdown and role binding fails closed on SQLite.
 - **Candidate Provenance & Test Lock:** Enforced Git `patch-id` matching on cherry-picked worker commits and serial heavy local verification locks.
 
 ### Changed

@@ -10,11 +10,17 @@ permissions:
 
 jobs:
   validate:
-    name: Validate Tagged Source
-    runs-on: ubuntu-latest
+    name: Validate (${{ matrix.os }})
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Check out tagged commit
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -26,27 +32,57 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Verify Tag Matches Manifest Version
-        id: check-version
+      - name: Verify Strict SemVer, Version Alignment & Provenance
+        shell: bash
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
-          VERSION="${TAG#v}"
-          echo "Tagged release version: $VERSION"
           python -c "
-          import json, sys
-          data = json.load(open('manifest.json'))
-          manifest_ver = data.get('version')
-          if manifest_ver != '$VERSION':
-              sys.exit(f'Tag version mismatch: tag is $VERSION but manifest.json is {manifest_ver}')
+          import json, re, sys, subprocess
+          tag = '$TAG'
+          if not re.match(r'^v[0-9]+\.[0-9]+\.[0-9]+$', tag):
+              sys.exit(f'ERROR: Tag \"{tag}\" is not strict SemVer (expected vX.Y.Z)')
+          ver = tag[1:]
+          manifest = json.load(open('manifest.json'))['version']
+          package = json.load(open('package.json'))['version']
+          if manifest != ver:
+              sys.exit(f'ERROR: manifest.json version ({manifest}) != tag ({ver})')
+          if package != ver:
+              sys.exit(f'ERROR: package.json version ({package}) != tag ({ver})')
+          changelog = open('CHANGELOG.md', encoding='utf-8').read()
+          if f'[{ver}]' not in changelog:
+              sys.exit(f'ERROR: CHANGELOG.md does not contain release section for [{ver}]')
+          try:
+              subprocess.run(['git', 'fetch', 'origin', 'main'], check=True, capture_output=True)
+              res = subprocess.run(['git', 'merge-base', '--is-ancestor', 'HEAD', 'origin/main'], capture_output=True)
+              if res.returncode != 0:
+                  print('NOTE: Tag is outside origin/main branch history.')
+          except Exception as e:
+              print(f'Provenance check note: {e}')
+          print(f'Confirmed: tag {tag} matches manifest ({manifest}), package ({package}), and CHANGELOG.')
           "
 
       - name: Run Test Suite
+        shell: bash
         run: |
           python -m unittest tests/test_ledger_pilot.py tests/test_pack.py tests/test_progress_view.py tests/test_package_and_update.py
 
-      - name: Test Installer Dry-Runs
+      - name: Validate Packaging Dry-Run
+        shell: bash
+        run: |
+          python tools/package.py --dry-run
+
+      - name: Test Native POSIX Installer Dry-Run (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
         run: |
           sh ./install.sh --dry-run
+          node bin/install.js --dry-run
+
+      - name: Test Native PowerShell Installer Dry-Run (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          .\install.ps1 -DryRun
           node bin/install.js --dry-run
 
   publish:

@@ -9,9 +9,12 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import hmac
 import json
 import os
+import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import urllib.error
@@ -69,12 +72,33 @@ def get_installed_versions() -> dict[str, dict[str, str | None]]:
     return results
 
 
-def fetch_latest_release(allow_prerelease: bool = False) -> dict | None:
+def get_github_token() -> str | None:
+    """Retrieves GitHub token from environment or active gh CLI authentication."""
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if token and token.strip():
+        return token.strip()
+    gh = shutil.which("gh")
+    if gh:
+        try:
+            res = subprocess.run([gh, "auth", "token"], capture_output=True, text=True, timeout=5, check=False)
+            if res.returncode == 0 and res.stdout.strip():
+                return res.stdout.strip()
+        except Exception:
+            pass
+    return None
+
+
+def fetch_latest_release(token: str | None = None, allow_prerelease: bool = False) -> dict | None:
     """Queries GitHub Releases API for the latest compatible release."""
-    req = urllib.request.Request(
-        f"{GITHUB_API_URL}",
-        headers={"User-Agent": "Herdr-Role-Pack-Updater", "Accept": "application/vnd.github.v3+json"},
-    )
+    token = token if token is not None else get_github_token()
+    headers = {
+        "User-Agent": "Herdr-Role-Pack-Updater",
+        "Accept": "application/vnd.github.v3+json",
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    req = urllib.request.Request(GITHUB_API_URL, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=10) as response:
             if response.status != 200:
@@ -89,11 +113,23 @@ def fetch_latest_release(allow_prerelease: bool = False) -> dict | None:
                     return release
             return None
     except urllib.error.HTTPError as e:
+        if e.code == 401:
+            raise RuntimeError(
+                "AUTH_REQUIRED: GitHub authentication required to access repository releases. "
+                "Set GITHUB_TOKEN or authenticate via 'gh auth login'."
+            )
+        if e.code == 403:
+            raise RuntimeError(
+                "ACCESS_DENIED: Access denied to repository releases. Verify token permissions."
+            )
         if e.code == 404:
+            if not token:
+                raise RuntimeError(
+                    "AUTH_REQUIRED: Received 404 from repository API. If this is a private repository, "
+                    "authentication is required. Set GITHUB_TOKEN or authenticate via 'gh auth login'."
+                )
             return None
         raise
-    except Exception:
-        return None
 
 
 def calculate_sha256(file_path: Path) -> str:
@@ -102,6 +138,21 @@ def calculate_sha256(file_path: Path) -> str:
         while chunk := f.read(65536):
             hasher.update(chunk)
     return hasher.hexdigest()
+
+
+def parse_checksums_file(sums_text: str) -> dict[str, str]:
+    """Strictly parses SHA256SUMS: '<64 hex sha>  [*]<filename>'."""
+    entries: dict[str, str] = {}
+    pattern = re.compile(r"^([0-9a-fA-F]{64})\s+[*]?(.+)$")
+    for line in sums_text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        m = pattern.match(line)
+        if m:
+            hash_val, fname = m.groups()
+            entries[Path(fname.strip()).name] = hash_val.lower()
+    return entries
 
 
 def validate_archive_safety(zip_path: Path) -> list[str]:
@@ -118,13 +169,61 @@ def validate_archive_safety(zip_path: Path) -> list[str]:
     return errors
 
 
+def download_asset(asset: dict, dest_path: Path, token: str | None = None) -> None:
+    """Downloads a release asset, handling authenticated private repository downloads."""
+    token = token if token is not None else get_github_token()
+
+    # Try authenticated GitHub API asset download if token is present
+    if token and asset.get("url"):
+        req = urllib.request.Request(
+            asset["url"],
+            headers={
+                "User-Agent": "Herdr-Role-Pack-Updater",
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/octet-stream",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp, open(dest_path, "wb") as f:
+                while chunk := resp.read(65536):
+                    f.write(chunk)
+            return
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403):
+                raise RuntimeError("ACCESS_DENIED: Failed to download release asset with current credentials.")
+
+    # Fall back to browser download URL
+    url = asset.get("browser_download_url")
+    if not url:
+        raise ValueError(f"No download URL available for asset {asset.get('name')}")
+    req = urllib.request.Request(url, headers={"User-Agent": "Herdr-Role-Pack-Updater"})
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp, open(dest_path, "wb") as f:
+            while chunk := resp.read(65536):
+                f.write(chunk)
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            raise RuntimeError("AUTH_REQUIRED: GitHub authentication required to download release asset.")
+        if e.code == 403:
+            raise RuntimeError("ACCESS_DENIED: Access denied when downloading release asset.")
+        if e.code == 404:
+            raise RuntimeError(f"ASSET_NOT_FOUND: Release asset {asset.get('name')} not found (404).")
+        raise
+
+
 def backup_managed_skills() -> Path:
-    """Creates a local backup of currently installed managed skills."""
-    timestamp = Path(tempfile.gettempdir())
+    """Creates a local backup of currently installed managed skills with transaction manifest."""
     import time
     ts_str = time.strftime("%Y%m%d-%H%M%S")
     backup_dir = BACKUP_ROOT / f"backup-{ts_str}"
     backup_dir.mkdir(parents=True, exist_ok=True)
+
+    manifest_data = {
+        "timestamp": ts_str,
+        "items": {}
+    }
 
     for agent, base_dir in get_agent_skill_dirs().items():
         agent_backup = backup_dir / agent
@@ -133,15 +232,55 @@ def backup_managed_skills() -> Path:
             if target.exists() and (target / MANAGED_MARKER).exists():
                 dest = agent_backup / skill
                 shutil.copytree(target, dest, dirs_exist_ok=True)
+                file_hashes = {}
+                for root, _, files in os.walk(target):
+                    for file in sorted(files):
+                        p = Path(root) / file
+                        rel = p.relative_to(target).as_posix()
+                        file_hashes[rel] = calculate_sha256(p)
+                manifest_data["items"][f"{agent}/{skill}"] = {
+                    "agent": agent,
+                    "skill": skill,
+                    "target": str(target.resolve()),
+                    "files": file_hashes
+                }
 
+    manifest_file = backup_dir / "backup_manifest.json"
+    manifest_file.write_text(json.dumps(manifest_data, indent=2), encoding="utf-8")
     return backup_dir
 
 
-def restore_backup(backup_dir: Path) -> None:
-    """Restores skills from an existing backup."""
+def restore_backup(backup_dir: Path, newly_installed_slots: list[Path] | None = None) -> None:
+    """Restores skills from an existing backup, protecting unmanaged and user-modified skills."""
     if not backup_dir.exists():
         raise FileNotFoundError(f"Backup directory not found: {backup_dir}")
 
+    # PREFLIGHT DESTINATION CHECK:
+    # Never overwrite or delete any directory that is unmanaged!
+    for agent, base_dir in get_agent_skill_dirs().items():
+        agent_backup = backup_dir / agent
+        if not agent_backup.exists():
+            continue
+        for skill in MANAGED_SKILLS:
+            src = agent_backup / skill
+            if src.exists():
+                target = base_dir / skill
+                if target.exists():
+                    marker = target / MANAGED_MARKER
+                    if not marker.exists():
+                        raise RuntimeError(
+                            f"REFUSE: destination '{target}' is unmanaged! "
+                            "Rollback blocked to preserve unrelated user files."
+                        )
+
+    # Clean up newly created slots from a failed installation
+    if newly_installed_slots:
+        for slot in newly_installed_slots:
+            if slot.exists() and (slot / MANAGED_MARKER).exists():
+                shutil.rmtree(slot, ignore_errors=True)
+                print(f"Cleaned up newly created slot: {slot.name}")
+
+    # Perform restoration
     for agent, base_dir in get_agent_skill_dirs().items():
         agent_backup = backup_dir / agent
         if not agent_backup.exists():
@@ -195,11 +334,15 @@ def main() -> int:
         else:
             target_backup = Path(args.rollback)
         print(f"Restoring from: {target_backup}...")
-        restore_backup(target_backup)
+        try:
+            restore_backup(target_backup)
+        except Exception as e:
+            print(f"ERROR during rollback: {e}", file=sys.stderr)
+            return 1
         print("Rollback completed successfully.")
         return 0
 
-    # Version check
+    # Version inspection
     installed = get_installed_versions()
     print("Installed skills inspection:")
     any_installed = False
@@ -215,7 +358,7 @@ def main() -> int:
     try:
         latest = fetch_latest_release(allow_prerelease=args.prerelease)
     except Exception as e:
-        print(f"Network / API error querying releases: {e}", file=sys.stderr)
+        print(f"ERROR: {e}", file=sys.stderr)
         return 1
 
     if not latest:
@@ -241,37 +384,42 @@ def main() -> int:
         return 0
 
     if args.dry_run:
-        print(f"[DRY-RUN] Would download {pack_asset['name']}")
-        print(f"[DRY-RUN] Would verify archive and checksums against SHA256SUMS")
-        print(f"[DRY-RUN] Would back up current skills to {BACKUP_ROOT}")
-        print(f"[DRY-RUN] Would update managed skills across Claude, Codex, and Agy")
+        print(f"\n[DRY-RUN] Would download: {pack_asset['name']}")
+        print(f"[DRY-RUN] Would verify checksum from: {sums_asset['name'] if sums_asset else 'MISSING'}")
+        print(f"[DRY-RUN] Would back up current skills to: {BACKUP_ROOT}")
+        print(f"[DRY-RUN] Would extract and invoke installer with --force")
         return 0
 
-    print(f"\nInitiating safe update to {tag_name}...")
-    backup_dir = backup_managed_skills()
-    print(f"Saved pre-update backup: {backup_dir}")
+    # Fail fast if Node.js runtime is unavailable
+    node_cmd = shutil.which("node")
+    if not node_cmd:
+        print("ERROR: Node.js runtime is required for updating. Please install Node.js.", file=sys.stderr)
+        return 1
 
     temp_dir = Path(tempfile.mkdtemp(prefix="herdr-update-"))
+    backup_dir = None
     try:
         archive_path = temp_dir / pack_asset["name"]
         print(f"Downloading {pack_asset['name']}...")
-        urllib.request.urlretrieve(pack_asset["browser_download_url"], archive_path)
+        download_asset(pack_asset, archive_path)
 
-        # Validate checksum if SHA256SUMS asset exists
-        if sums_asset:
-            sums_path = temp_dir / "SHA256SUMS"
-            urllib.request.urlretrieve(sums_asset["browser_download_url"], sums_path)
-            sums_text = sums_path.read_text(encoding="utf-8")
-            expected_hash = None
-            for line in sums_text.splitlines():
-                if pack_asset["name"] in line:
-                    expected_hash = line.split()[0]
-                    break
-            if expected_hash:
-                actual_hash = calculate_sha256(archive_path)
-                if actual_hash != expected_hash:
-                    raise ValueError(f"Checksum mismatch! Expected {expected_hash}, got {actual_hash}")
-                print("Checksum verified successfully.")
+        # Validate checksum: SHA256SUMS is MANDATORY
+        if not sums_asset:
+            raise ValueError("INTEGRITY_ERROR: Release is missing required SHA256SUMS asset.")
+
+        sums_path = temp_dir / "SHA256SUMS"
+        download_asset(sums_asset, sums_path)
+        sums_text = sums_path.read_text(encoding="utf-8")
+        parsed_sums = parse_checksums_file(sums_text)
+
+        expected_hash = parsed_sums.get(pack_asset["name"])
+        if not expected_hash:
+            raise ValueError(f"INTEGRITY_ERROR: No checksum entry found for '{pack_asset['name']}' in SHA256SUMS.")
+
+        actual_hash = calculate_sha256(archive_path)
+        if not hmac.compare_digest(actual_hash.lower(), expected_hash.lower()):
+            raise ValueError(f"INTEGRITY_ERROR: Checksum mismatch for {pack_asset['name']}! Expected {expected_hash}, got {actual_hash}")
+        print("Checksum verified successfully.")
 
         # Validate archive layout safety
         safety_errors = validate_archive_safety(archive_path)
@@ -282,23 +430,27 @@ def main() -> int:
         with zipfile.ZipFile(archive_path, "r") as zf:
             zf.extractall(extract_dir)
 
-        # Run extracted node installer or python installer
+        # Pre-update backup created right before execution
+        print(f"\nInitiating safe update to {tag_name}...")
+        backup_dir = backup_managed_skills()
+        print(f"Saved pre-update backup: {backup_dir}")
+
+        # Run extracted node installer
         install_js = extract_dir / "bin" / "install.js"
-        if install_js.exists():
-            import subprocess
-            res = subprocess.run([sys.executable, str(extract_dir / "tools" / "package.py"), "--dry-run"], capture_output=True)
-            # Invoke install.js with --force
-            node_cmd = shutil.which("node")
-            if node_cmd:
-                subprocess.run([node_cmd, str(install_js), "--force"], check=True)
-            else:
-                print("Node.js not found; installing via local file copy.")
+        if not install_js.exists():
+            raise FileNotFoundError(f"Missing installer inside archive: {install_js}")
+
+        subprocess.run([node_cmd, str(install_js), "--force"], check=True)
         print(f"Update to {tag_name} completed successfully.")
     except Exception as e:
         print(f"ERROR: Update failed: {e}", file=sys.stderr)
-        print("Restoring from backup...", file=sys.stderr)
-        restore_backup(backup_dir)
-        print("Original installation restored cleanly.", file=sys.stderr)
+        if backup_dir and backup_dir.exists():
+            print("Restoring from backup...", file=sys.stderr)
+            try:
+                restore_backup(backup_dir)
+                print("Original installation restored cleanly.", file=sys.stderr)
+            except Exception as re:
+                print(f"CRITICAL: Rollback encountered an error: {re}", file=sys.stderr)
         return 1
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
