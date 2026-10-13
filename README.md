@@ -79,7 +79,42 @@ The skill operates entirely through local Markdown packets, Git commits, and sta
 
 The installer places the skills into your user-level agent configuration folders (`~/.claude/skills`, `~/.agents/skills`, `~/.gemini/antigravity-cli/skills`).
 
-### Cross-Platform (Node.js / npx)
+### One Command (no clone needed)
+
+```bash
+npx github:Jacinth091/Herdr-Loop-Skill#v2.8.0
+```
+
+That's it: `npx` fetches the pack from GitHub and runs the installer. It backs up anything it replaces, rolls back if a copy fails part-way, and never touches skill folders it didn't install.
+
+**Needs:** Node.js 16+ and Git access to this private repository (run `gh auth setup-git` once, or sign in through Git Credential Manager). Restart your agent CLIs afterwards so they load the skills.
+
+**Pick what you want:**
+
+| I want to... | Command |
+|---|---|
+| Install everything (all roles, all agents) | `npx github:Jacinth091/Herdr-Loop-Skill#v2.8.0` |
+| See what it would do first, changing nothing | `npx github:Jacinth091/Herdr-Loop-Skill#v2.8.0 --dry-run` |
+| Update an existing install to this release | `npx github:Jacinth091/Herdr-Loop-Skill#v2.8.0 --force` |
+| Try the latest unreleased `main` | `npx github:Jacinth091/Herdr-Loop-Skill --force` |
+| Install for Claude Code only | `npx github:Jacinth091/Herdr-Loop-Skill#v2.8.0 --agents claude` |
+| Install for Claude Code and Codex only | `npx github:Jacinth091/Herdr-Loop-Skill#v2.8.0 --agents claude,codex` |
+| Claude as Manager + Critic | `npx github:Jacinth091/Herdr-Loop-Skill#v2.8.0 --agents claude --roles controller,manager,critic` |
+| Codex as Delegator | `npx github:Jacinth091/Herdr-Loop-Skill#v2.8.0 --agents codex --roles controller,delegator` |
+| Agy as a Worker only | `npx github:Jacinth091/Herdr-Loop-Skill#v2.8.0 --agents agy --roles controller,worker` |
+| Claude Haiku as Verifier | `npx github:Jacinth091/Herdr-Loop-Skill#v2.8.0 --agents claude --roles controller,verifier` |
+| Also install the official `herdr` skill (from `herdr --skill`) | `npx github:Jacinth091/Herdr-Loop-Skill#v2.8.0 --with-herdr` |
+| Remove everything the pack installed | `npx github:Jacinth091/Herdr-Loop-Skill --uninstall` |
+| Remove it from one agent only | `npx github:Jacinth091/Herdr-Loop-Skill --uninstall --agents agy` |
+| See all options | `npx github:Jacinth091/Herdr-Loop-Skill --help` |
+
+- **Agents:** `claude`, `codex`, `agy`, or `all` (the default).
+- **Roles:** `controller` (the `herdr-engineering-loop` session skill), `manager`, `delegator`, `worker`, `verifier`, `critic`, or `all` (the default). Keep `controller` in any role subset: it is the skill that sets up and coordinates the run.
+- **Flags combine freely**, e.g. `--agents claude --roles controller,manager --dry-run`.
+- **Pinning:** `#v2.8.0` installs exactly that published release. Leave it off to get whatever is on `main` right now. Replace it with a newer tag (see [Releases](https://github.com/Jacinth091/Herdr-Loop-Skill/releases)) to upgrade.
+- **Already installed?** Without `--force`, existing pack skills are skipped. A folder with the same name that the pack did not install is never overwritten; the installer stops and tells you which one.
+
+### From a Local Clone (Node.js / npx)
 ```bash
 # Preview actions without writing:
 npx . --dry-run
@@ -90,6 +125,7 @@ npx .
 # Force refresh existing installed copies:
 npx . --force
 ```
+Every option in the table above works here too, e.g. `npx . --agents claude --roles controller,manager`.
 
 ### Windows (PowerShell)
 ```powershell
@@ -240,6 +276,10 @@ python tools/update.py --dry-run
 # Apply update with pre-update backup:
 python tools/update.py
 ```
+No clone? Update straight from GitHub by pinning the newer release tag:
+```bash
+npx github:Jacinth091/Herdr-Loop-Skill#vX.Y.Z --force
+```
 
 ### Rollback on Demand
 If an update causes issues, restore your previous installation cleanly:
@@ -254,6 +294,8 @@ python tools/update.py --rollback latest
 ### Safe Uninstall
 To remove pack-managed skills without deleting your custom files or project sessions:
 ```bash
+npx github:Jacinth091/Herdr-Loop-Skill --uninstall
+# from a local clone:
 npx . --uninstall
 # or on Windows:
 .\install.ps1 -Uninstall
