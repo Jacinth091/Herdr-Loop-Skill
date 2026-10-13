@@ -48,6 +48,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sh ./install.sh --dry-run
+          sh tests/test_installer.sh
 
       - name: Test Deterministic Packaging & Archive Validation
         run: |

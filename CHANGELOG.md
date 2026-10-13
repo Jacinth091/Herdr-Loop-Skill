@@ -13,7 +13,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
-## [2.8.0] - 2026-10-13
+## [2.8.0] - Unreleased
+
+> Not yet published: no `v2.8.0` tag or GitHub Release exists. Versions 2.4.0-2.7.0 below are internal
+> milestones that were never tagged or released.
 
 ### Added
 - **Skill-First Documentation:** Rebuilt `README.md` as a user-focused practical manual detailing team roles, safety requirements, and worked session walkthroughs.
@@ -22,13 +25,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - **Safe Explicit Updater:** Added `tools/update.py` for checking GitHub Releases, verifying asset checksums, creating pre-update backups in `~/.herdr-backups/`, and providing one-command rollback (`--rollback latest`).
 - **Continuous Integration & Tag-Gated Releases:** Added `.github/workflows/ci.yml` (multi-OS testing on Ubuntu and Windows) and `.github/workflows/release.yml` (tag-gated publishing with version validation).
 - **Cross-Platform Node.js Installer:** Added `bin/install.js` and `package.json` enabling one-command installation via `npx .` with atomic staging and rollback.
-- **Transactional SQLite Ledger (Schema v2):** Added deterministic ACID state engine in `skills/herdr-engineering-loop/scripts/herdr_ledger.py` for opt-in token-efficient runs (`state_backend: "sqlite"`).
+- **Transactional SQLite Ledger (Schema v2):** Added deterministic ACID state engine in `skills/herdr-engineering-loop/scripts/herdr_ledger.py` for offline evaluation and inspection; routine live runs use Markdown and role binding fails closed on SQLite.
 - **Candidate Provenance & Test Lock:** Enforced Git `patch-id` matching on cherry-picked worker commits and serial heavy local verification locks.
 
 ### Changed
 - Preserved Delegator-owned `SESSION.md` as the default backend for standard runs.
 - Enforced mutual exclusion between `SESSION.md` and `ledger.sqlite` in `tools/role_bind.py`.
 - Updated `tools/progress_view.py` to support querying both Markdown sessions and SQLite databases.
+
+### Fixed
+- `verify-reconcile` releases verification locks only after the recorded test PID is observed gone; unknown liveness keeps the locks.
+- `tools/update.py` requires an exact `SHA256SUMS` entry and Node.js before touching anything, authenticates private-release access (token never forwarded to the asset CDN), updates only agents that already have the pack, and refuses rollback over unmanaged or locally edited slots.
+- `bin/install.js` removes newly created slots when a fresh install fails part-way and reports incomplete rollbacks.
+- Release workflow refuses tags whose commit is not on `main`.
 
 ---
 

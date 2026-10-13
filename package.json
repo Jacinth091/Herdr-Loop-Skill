@@ -30,7 +30,11 @@
   "files": [
     "bin",
     "skills",
+    "!skills/**/__pycache__",
+    "!skills/**/*.pyc",
     "tools",
+    "!tools/**/__pycache__",
+    "!tools/**/*.pyc",
     "examples",
     "docs",
     "manifest.json",

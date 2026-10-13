@@ -2,6 +2,9 @@
 """
 Deterministic packaging and archive validation utility for Herdr Role Pack.
 Creates release ZIP archives, validates archive safety, and calculates SHA256 checksums.
+Archives are deterministic for a given source tree (fixed timestamps, sorted members,
+LF line endings, fixed permissions). Cross-OS byte identity also depends on the zlib
+build, so the published SHA256SUMS, not a rebuild, is the integrity authority.
 """
 
 from __future__ import annotations
@@ -16,6 +19,24 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent.parent
+
+MANDATORY_ROOT_FILES = [
+    "LICENSE",
+    "manifest.json",
+    "package.json",
+    "README.md",
+    "CHANGELOG.md",
+    "install.ps1",
+    "install.sh",
+    "bin/install.js",
+]
+
+MANDATORY_DIRS = [
+    "skills",
+    "tools",
+    "examples",
+    "docs",
+]
 
 
 def get_canonical_version() -> str:
@@ -32,6 +53,24 @@ def calculate_sha256(file_path: Path) -> str:
         while chunk := f.read(65536):
             hasher.update(chunk)
     return hasher.hexdigest()
+
+
+def add_file_deterministic(zf: zipfile.ZipFile, file_path: Path, arcname: str) -> None:
+    """Adds a file to zip with normalized timestamps, permissions, and line endings for reproducibility."""
+    data = file_path.read_bytes()
+    # Normalize line endings for text files so git autocrlf settings across OS produce identical archives
+    text_extensions = {".md", ".json", ".js", ".sh", ".ps1", ".py", ".yml", ".yaml", ".txt"}
+    if file_path.suffix.lower() in text_extensions or file_path.name in ("LICENSE", "SHA256SUMS"):
+        data = data.replace(b"\r\n", b"\n")
+
+    # Canonical fixed timestamp (2026-01-01 00:00:00)
+    zinfo = zipfile.ZipInfo(filename=arcname, date_time=(2026, 1, 1, 0, 0, 0))
+    # Normalized permissions (0o755 for scripts/executables, 0o644 for regular files)
+    is_exec = file_path.suffix in (".sh", ".ps1") or arcname.startswith("bin/")
+    perm = 0o755 if is_exec else 0o644
+    zinfo.external_attr = (perm & 0xFFFF) << 16
+    zinfo.compress_type = zipfile.ZIP_DEFLATED
+    zf.writestr(zinfo, data)
 
 
 def validate_archive_members(zip_path: Path) -> list[str]:
@@ -63,65 +102,73 @@ def validate_archive_members(zip_path: Path) -> list[str]:
 
 
 def build_role_pack_archive(output_path: Path) -> None:
-    """Builds the complete herdr-role-pack ZIP archive."""
-    include_paths = [
-        "manifest.json",
-        "package.json",
-        "README.md",
-        "CHANGELOG.md",
-        "install.ps1",
-        "install.sh",
-        "bin/install.js",
-    ]
-    include_dirs = [
-        "skills",
-        "tools",
-        "examples",
-        "docs",
-    ]
+    """Builds the complete herdr-role-pack ZIP archive deterministically."""
     exclude_dirs = {"__pycache__", ".git", ".herdr-loop", ".sqlite-tracer", "tests"}
     exclude_files = {".DS_Store", "Thumbs.db"}
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        # Add root files
-        for rel_file in include_paths:
+        # 1. Add root files sorted
+        for rel_file in sorted(MANDATORY_ROOT_FILES):
             src = ROOT / rel_file
             if src.exists():
-                zf.write(src, arcname=rel_file)
+                add_file_deterministic(zf, src, rel_file)
+            else:
+                raise FileNotFoundError(f"Missing required file for role pack: {src}")
 
-        # Add directories
-        for rel_dir in include_dirs:
+        # 2. Collect and sort all directory files
+        collected_files: list[tuple[Path, str]] = []
+        for rel_dir in sorted(MANDATORY_DIRS):
             dir_src = ROOT / rel_dir
             if not dir_src.exists():
                 continue
             for root, dirs, files in os.walk(dir_src):
-                dirs[:] = [d for d in dirs if d not in exclude_dirs and not d.startswith(".")]
-                for file in files:
+                dirs[:] = sorted([d for d in dirs if d not in exclude_dirs and not d.startswith(".")])
+                for file in sorted(files):
                     if file in exclude_files or file.endswith((".pyc", ".pyo")):
                         continue
                     file_path = Path(root) / file
                     arcname = str(file_path.relative_to(ROOT)).replace("\\", "/")
-                    zf.write(file_path, arcname=arcname)
+                    collected_files.append((file_path, arcname))
+
+        # Write collected files in sorted order
+        for file_path, arcname in sorted(collected_files, key=lambda x: x[1]):
+            add_file_deterministic(zf, file_path, arcname)
 
 
 def build_controller_archive(output_path: Path) -> None:
-    """Builds a standalone controller skill archive."""
+    """Builds a standalone controller skill archive deterministically."""
     controller_dir = ROOT / "skills" / "herdr-engineering-loop"
     if not controller_dir.exists():
         raise FileNotFoundError(f"Controller skill directory not found: {controller_dir}")
 
     exclude_dirs = {"__pycache__"}
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    collected_files: list[tuple[Path, str]] = []
     with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for root, dirs, files in os.walk(controller_dir):
-            dirs[:] = [d for d in dirs if d not in exclude_dirs and not d.startswith(".")]
-            for file in files:
+            dirs[:] = sorted([d for d in dirs if d not in exclude_dirs and not d.startswith(".")])
+            for file in sorted(files):
                 if file.endswith((".pyc", ".pyo")):
                     continue
                 file_path = Path(root) / file
                 arcname = str(file_path.relative_to(controller_dir)).replace("\\", "/")
-                zf.write(file_path, arcname=arcname)
+                collected_files.append((file_path, arcname))
+
+        for file_path, arcname in sorted(collected_files, key=lambda x: x[1]):
+            add_file_deterministic(zf, file_path, arcname)
+
+
+def check_input_completeness() -> list[str]:
+    """Verifies that all required files and directories exist."""
+    missing = []
+    for rel_file in MANDATORY_ROOT_FILES:
+        if not (ROOT / rel_file).exists():
+            missing.append(f"Missing file: {rel_file}")
+    for rel_dir in MANDATORY_DIRS:
+        if not (ROOT / rel_dir).exists():
+            missing.append(f"Missing directory: {rel_dir}")
+    return missing
 
 
 def main() -> int:
@@ -140,8 +187,17 @@ def main() -> int:
     version = canonical_version
     output_dir = Path(args.output_dir).resolve()
 
+    # Preflight input files check
+    missing = check_input_completeness()
+    if missing:
+        print("ERROR: Incomplete release inputs:", file=sys.stderr)
+        for m in missing:
+            print(f"  - {m}", file=sys.stderr)
+        return 1
+
     if args.dry_run:
         print(f"[DRY-RUN] Validated manifest version: {version}")
+        print(f"[DRY-RUN] Verified presence of all mandatory root files and directories (including LICENSE).")
         print(f"[DRY-RUN] Archive targets would be placed in: {output_dir}")
         return 0
 

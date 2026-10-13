@@ -29,7 +29,7 @@ Before creating a release tag, maintainers must verify:
 - [ ] All unit tests pass cleanly: `npm test` or `python -m unittest ...`.
 - [ ] Installer dry-runs succeed across all supported platforms (`install.ps1 -DryRun`, `install.sh --dry-run`, `node bin/install.js --dry-run`).
 - [ ] Packaging dry-run succeeds with zero path escapes, no duplicate archive members, and no unmanaged artifacts (`.herdr-loop/`, `__pycache__`, `.env`).
-- [ ] `CHANGELOG.md` has been updated: entries under `## Unreleased` are moved into a dated `## vX.Y.Z (YYYY-MM-DD)` section.
+- [ ] `CHANGELOG.md` has a `## [X.Y.Z] - YYYY-MM-DD` section (the release workflow refuses the tag without `## [X.Y.Z]`).
 - [ ] Working tree is clean and all commits are merged to `main`.
 
 ---
@@ -38,7 +38,7 @@ Before creating a release tag, maintainers must verify:
 
 ### Step 1: Update Version & Changelog
 Update `manifest.json` and `package.json` to the target version `X.Y.Z`.
-Move the notes in `CHANGELOG.md` from `## Unreleased` to `## vX.Y.Z (YYYY-MM-DD)`.
+Move the notes in `CHANGELOG.md` from `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`.
 
 Commit the changes:
 ```bash
@@ -64,7 +64,7 @@ git push origin "vX.Y.Z"
 ### Step 4: Automated GitHub Actions Release
 Pushing the `v*` tag triggers `.github/workflows/release.yml`.
 The workflow:
-1. Runs the full test suite on Ubuntu and Windows.
-2. Verifies that the tag matches `manifest.json`.
+1. Verifies the tag is strict `vX.Y.Z`, matches `manifest.json`, `package.json` and a `CHANGELOG.md` section, and points at a commit on `main` (otherwise nothing is published).
+2. Runs the full test suite and installer dry-runs on Ubuntu and Windows at the tagged commit.
 3. Runs `tools/package.py` to produce release ZIPs and `SHA256SUMS`.
 4. Creates the GitHub Release with attached assets and release notes using `gh release create`.

@@ -1,6 +1,6 @@
-__pycache__/
-*.pyc
-*.pyo
+**/__pycache__/**
+**/*.pyc
+**/*.pyo
 .herdr-loop/
 .sqlite-tracer/
 tests/

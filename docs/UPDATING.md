@@ -26,6 +26,8 @@ python tools/update.py --check
 
 To update your installed skills to the latest published release:
 
+**Requirements:** Node.js on `PATH` (the updater runs the release's `bin/install.js`), and, because the repository is private, GitHub access: run `gh auth login` once, or set `GITHUB_TOKEN`/`GH_TOKEN`. Without access the updater stops with `AUTH_REQUIRED` or `ACCESS_DENIED`; it never reports "no releases" for an auth failure. The token is sent only to GitHub, never to the asset download host.
+
 ### Preview First (Dry-Run)
 ```bash
 python tools/update.py --dry-run
@@ -37,10 +39,10 @@ python tools/update.py
 ```
 
 ### What Happens During Update:
-1. **Integrity Check:** The updater downloads the release archive and verifies its SHA-256 digest against `SHA256SUMS`.
+1. **Integrity Check:** The updater downloads the release archive and verifies its SHA-256 digest against the exact entry in `SHA256SUMS`. A release without `SHA256SUMS`, without an entry for the archive, or with a mismatch is refused before anything is extracted or backed up.
 2. **Safety Scan:** Archive members are scanned to ensure no path traversal (`..`) or unsafe directories exist.
 3. **Automated Backup:** All currently installed managed skills across Claude, Codex, and Agy are backed up to a timestamped folder under `~/.herdr-backups/backup-<timestamp>/`.
-4. **Staged Replacement:** New skills are installed. Unmanaged user folders and unrelated skills are never touched.
+4. **Staged Replacement:** New skills are installed only for the agents (Claude, Codex, Agy) that already have the pack. Unmanaged user folders and unrelated skills are never touched.
 5. **Fail-Closed Guarantee:** If any step fails during update, the previous installation is automatically restored from the backup.
 
 ---
@@ -56,6 +58,10 @@ python tools/update.py --list-backups
 # Restore previous installation:
 python tools/update.py --rollback latest
 ```
+
+Rollback restores the backed-up skills and removes the role slots that the update newly created. Before changing anything it saves the current state as a new backup, so `--rollback latest` run again undoes the rollback.
+
+Rollback **refuses and changes nothing** when a destination folder is not pack-managed, when a managed skill was edited after the update, or when the backup no longer matches its manifest. Move your edits aside, then re-run.
 
 You can also restore a specific backup directory by path:
 ```bash

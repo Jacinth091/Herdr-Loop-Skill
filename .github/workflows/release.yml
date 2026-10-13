@@ -10,11 +10,17 @@ permissions:
 
 jobs:
   validate:
-    name: Validate Tagged Source
-    runs-on: ubuntu-latest
+    name: Validate (${{ matrix.os }})
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Check out tagged commit
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -26,27 +32,45 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Verify Tag Matches Manifest Version
-        id: check-version
+      - name: Verify Strict SemVer, Version Alignment & Provenance
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
-          TAG="${GITHUB_REF#refs/tags/}"
-          VERSION="${TAG#v}"
-          echo "Tagged release version: $VERSION"
-          python -c "
-          import json, sys
-          data = json.load(open('manifest.json'))
-          manifest_ver = data.get('version')
-          if manifest_ver != '$VERSION':
-              sys.exit(f'Tag version mismatch: tag is $VERSION but manifest.json is {manifest_ver}')
-          "
+          set -euo pipefail
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "ERROR: tag '$TAG' is not strict vX.Y.Z"; exit 1; }
+          VER="${TAG#v}"
+          MANIFEST=$(python -c "import json; print(json.load(open('manifest.json'))['version'])")
+          PACKAGE=$(python -c "import json; print(json.load(open('package.json'))['version'])")
+          [ "$MANIFEST" = "$VER" ] || { echo "ERROR: manifest.json version $MANIFEST != tag $VER"; exit 1; }
+          [ "$PACKAGE" = "$VER" ] || { echo "ERROR: package.json version $PACKAGE != tag $VER"; exit 1; }
+          grep -qF "## [$VER]" CHANGELOG.md || { echo "ERROR: CHANGELOG.md has no '## [$VER]' section"; exit 1; }
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "ERROR: tagged commit $GITHUB_SHA is not on origin/main; refusing to release"; exit 1; }
+          echo "Confirmed: $TAG matches manifest, package, CHANGELOG and is on main."
 
       - name: Run Test Suite
+        shell: bash
         run: |
           python -m unittest tests/test_ledger_pilot.py tests/test_pack.py tests/test_progress_view.py tests/test_package_and_update.py
 
-      - name: Test Installer Dry-Runs
+      - name: Validate Packaging Dry-Run
+        shell: bash
+        run: |
+          python tools/package.py --dry-run
+
+      - name: Test Native POSIX Installer Dry-Run (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
         run: |
           sh ./install.sh --dry-run
+          node bin/install.js --dry-run
+
+      - name: Test Native PowerShell Installer Dry-Run (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          .\install.ps1 -DryRun
           node bin/install.js --dry-run
 
   publish:

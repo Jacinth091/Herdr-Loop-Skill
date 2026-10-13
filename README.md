@@ -116,9 +116,15 @@ sh ./install.sh
 Here is a worked walkthrough for a single-task run (e.g. adding token expiry handling):
 
 ### Step 1: Open Herdr and Assign Panes
-Create two empty panes in Herdr:
-- Pane `w01:p1`: Start your Manager agent (`herdr agent start manager --kind claude`).
-- Pane `w01:p2`: Start your Delegator agent (`herdr agent start delegator --kind codex`).
+Inspect available panes:
+```bash
+herdr pane list
+```
+Start your Manager and Delegator agents in empty panes (specifying your actual pane IDs):
+```bash
+herdr agent start manager --kind claude --pane <pane-id-1>
+herdr agent start delegator --kind codex --pane <pane-id-2>
+```
 
 ### Step 2: Configure the Run Roster
 Create a run configuration file `roles.json`:
@@ -200,7 +206,7 @@ Agents coordinate through explicit handoff envelopes sent as Herdr prompt hints:
 
 - **Default 1 Worker:** To keep RAM usage safe on 8 GB–16 GB laptops, runs default to one active worker. Up to 3 independent workers may run only after explicit human approval.
 - **Worker Test-Execution Ban:** Workers never run test suites or builds. This prevents context window waste from repeated test failures and protects machine memory.
-- **Serial Heavy Test Lock:** At most **one** memory-heavy local test process (pytest, npm test, docker build) may run across the entire machine at any time.
+- **Serial Heavy Test Lock:** In offline SQLite pilot runs, at most **one** memory-heavy local test process (pytest, npm test, docker build) holds the `heavy-local-verification` lock within the run database. In standard Markdown sessions, operators must serialize test executions across tasks. Across independent runs, operators must avoid concurrent heavy workloads.
 
 ---
 
@@ -260,10 +266,10 @@ npx . --uninstall
 | Capability | Current Status | Notes |
 | :--- | :--- | :--- |
 | **Six-Role Multi-Agent Workflow** | **Stable / Supported** | Manager, Delegator, Worker, Verifier, Critic, Controller. |
-| **Standard Markdown Ledger (`SESSION.md`)** | **Stable / Default** | Human-readable, transparent, zero-dependency. |
-| **Transactional SQLite Ledger** | **Opt-in Pilot** | Verified in live tracer; opt-in via `"state_backend": "sqlite"`. Default remains Markdown. |
+| **Standard Markdown Ledger (`SESSION.md`)** | **Stable / Default** | Human-readable, transparent, zero-dependency. Active runtime authority. |
+| **Transactional SQLite Ledger** | **Offline Pilot Only** | Offline CLI pilot for evaluation only; not live-bindable (`role_bind.py` explicitly refuses `state_backend: "sqlite"`). |
 | **Zero-Dependency Installers** | **Supported** | `npx .`, PowerShell (`install.ps1`), and POSIX shell (`install.sh`). |
-| **Safe Updater & Rollback** | **Supported** | `tools/update.py` with backup, checksum checks, and rollback. |
+| **Safe Updater & Rollback** | **Supported** | `tools/update.py` with backup, mandatory checksum checks, and rollback. |
 | **Native Herdr Signals Transport** | *Future Proposal* | Current release uses Herdr `agent prompt` hints; documents remain truth. |
 
 ---
@@ -281,7 +287,9 @@ A: Yes, set `"max_active_workers": 2` or `3` and `"parallel_workers_authorized":
 
 ---
 
-For detailed documentation, operational architecture, and release procedures:
+## 14. Maintaining and Contributing
+
+For detailed documentation, operational architecture, maintainer guidelines, and release procedures:
 - [Operations & Architecture Guide](docs/OPERATIONS.md) — System lifecycle, candidate Git provenance, and offline SQLite pilot.
 - [Updating & Rollback Guide](docs/UPDATING.md) — Safe release updates, integrity checks, and rollback.
 - [Maintainer Guide](docs/MAINTAINING.md) — Development setup, testing standards, and core invariants.
