@@ -62,7 +62,7 @@ class LiveSQLiteTests(unittest.TestCase):
         (self.run_dir / 'ACTIVATION.json').write_text(json.dumps(self.manifest), encoding='utf8')
         self.caller = 'delegator'
 
-    def acknowledge(self, name):
+    def acknowledge(self, name, uppercase_hash=False):
         entry = next(a for a in self.manifest['agents'] if a['name'] == name)
         pane = self.pane(name)
         recipient = entry['signal_recipient']
@@ -75,6 +75,8 @@ class LiveSQLiteTests(unittest.TestCase):
         path = name + '.ready'
         (self.run_dir / path).write_text(ready, encoding='utf8')
         digest = hashlib.sha256((self.run_dir / path).read_bytes()).hexdigest()
+        if uppercase_hash:
+            digest = digest.upper()
         receipt = name + '.receipt'
         (self.run_dir / receipt).write_text(f'ROLE_READY run {op} {name} {pane} {recipient}\nevidence_sha={digest}\n', encoding='utf8')
         args = ledger.parser().parse_args(['--run-dir', str(self.run_dir), '--as-agent', name, '--epoch', '1',
@@ -146,6 +148,21 @@ class LiveSQLiteTests(unittest.TestCase):
         for command in ('plan-approve', 'verify-exec', 'task-accept'):
             with self.subTest(command=command), self.assertRaisesRegex(ledger.LedgerError, 'ROLE_AUTHORITY_BLOCKED'):
                 ledger.role_guard(self.run_dir, type('Args', (), dict(command=command, as_agent='worker_a1', epoch=1))())
+
+    def test_windows_receipt_hex_case_preserves_hash_validation(self):
+        self.bootstrap()
+        self.assertIn('CONFIRMED_APPLIED', self.acknowledge('manager', uppercase_hash=True))
+        receipt = self.receipt('ROLE_READY', 'upper1', 'READY.md', 'worker_a1', 'w3:p1', 'delegator')
+        path = self.run_dir / receipt
+        digest = hashlib.sha256((self.run_dir / 'READY.md').read_bytes()).hexdigest()
+        text = path.read_text(encoding='utf8').replace(digest, digest.upper())
+        path.write_text(text, encoding='utf8')
+        ledger.signal_receipt(self.run_dir, 'run', 'ROLE_READY', 'T01-A1', 'upper1',
+                              'worker_a1', 'w3:p1', 'delegator', 'READY.md', receipt)
+        path.write_text(text.replace(digest.upper(), '0' * 64), encoding='utf8')
+        with self.assertRaisesRegex(ledger.LedgerError, 'exact correlated envelope'):
+            ledger.signal_receipt(self.run_dir, 'run', 'ROLE_READY', 'T01-A1', 'upper1',
+                                  'worker_a1', 'w3:p1', 'delegator', 'READY.md', receipt)
 
     def test_prompt_submission_is_not_readiness(self):
         self.bootstrap()

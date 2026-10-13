@@ -461,6 +461,11 @@ def patch_identity(checkout, commit):
     return result.stdout.decode("ascii").split()[0]
 
 
+def receipt_hash_matches(lines, digest):
+    # Windows Get-FileHash emits uppercase hexadecimal for the same digest.
+    return any(line.startswith("evidence_sha=") and line.partition("=")[2].lower() == digest for line in lines)
+
+
 def signal_receipt(root, run_id, kind, attempt, event_id, sender, pane, recipient, evidence, receipt):
     if not KEY.fullmatch(event_id) or sender == recipient:
         fail("invalid signal event or recipient")
@@ -468,7 +473,7 @@ def signal_receipt(root, run_id, kind, attempt, event_id, sender, pane, recipien
     path, digest = relative_evidence(root, receipt)
     expected = f"{kind} {run_id} {attempt} {event_id} {sender} {pane} {recipient}"
     lines = (root / path).read_text(encoding="utf-8").splitlines()
-    if expected not in lines or f"evidence_sha={artifact_sha}" not in lines:
+    if expected not in lines or not receipt_hash_matches(lines, artifact_sha):
         fail("signal receipt does not contain exact correlated envelope")
     return artifact_path, artifact_sha, path, digest
 
@@ -600,7 +605,7 @@ def confirm_role(root, args):
         observe_recipient(recipient, args.recipient_pane)
     envelope = f"ROLE_READY {manifest['run_id']} {operation_id} {args.as_agent} {args.pane} {recipient}"
     lines = (root / receipt_path).read_text(encoding="utf-8").splitlines()
-    if envelope not in lines or f"evidence_sha={digest}" not in lines:
+    if envelope not in lines or not receipt_hash_matches(lines, digest):
         fail("ROLE_NOT_READY: correlated role receipt missing")
     receipt = dict(previous, status="CONFIRMED_APPLIED", epoch=args.epoch, pane=args.pane,
                    observed=observed, ready_path=path, ready_sha=digest,
