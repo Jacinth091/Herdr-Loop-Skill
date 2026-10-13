@@ -4,6 +4,14 @@ A structured, role-based workflow for coordinating autonomous coding agents (Cla
 
 Rather than relying on one unbounded mega-prompt or a complex external daemon, Herdr Loop Skill equips agents with **bounded, specialized role skills**. Agents collaborate inside their own Herdr workspaces and panes using isolated Git worktrees, sequential test gates, and explicit handoffs.
 
+> [!WARNING]
+> **Experimental hobby project.** This is a personal experiment for my own Herdr workflow, built largely with AI coding agents. It is shared as-is for anyone curious about the approach, not as a supported product.
+>
+> - **No stability promises:** roles, file formats and commands can change or break between versions.
+> - **No support commitment:** issues and ideas are welcome, but I may not respond or fix them.
+> - **Read before you run:** it installs agent instructions into your user skill folders and steers agents that edit code and run commands. Review the skills and try `--dry-run` first.
+> - **Provided under the [MIT License](LICENSE), without warranty of any kind.**
+
 ---
 
 ## Table of Contents
@@ -87,7 +95,7 @@ npx github:Jacinth091/Herdr-Loop-Skill#v2.8.0
 
 That's it: `npx` fetches the pack from GitHub and runs the installer. It backs up anything it replaces, rolls back if a copy fails part-way, and never touches skill folders it didn't install.
 
-**Needs:** Node.js 16+ and Git access to this private repository (run `gh auth setup-git` once, or sign in through Git Credential Manager). Restart your agent CLIs afterwards so they load the skills.
+**Needs:** Node.js 16+. If the repository is private to you, you also need Git access to it (run `gh auth setup-git` once, or sign in through Git Credential Manager). Restart your agent CLIs afterwards so they load the skills.
 
 **Pick what you want:**
 

@@ -27,7 +27,7 @@ python tools/update.py --check
 
 To update your installed skills to the latest published release:
 
-**Requirements:** Node.js on `PATH` (the updater runs the release's `bin/install.js`), and, because the repository is private, GitHub access: run `gh auth login` once, or set `GITHUB_TOKEN`/`GH_TOKEN`. Without access the updater stops with `AUTH_REQUIRED` or `ACCESS_DENIED`; it never reports "no releases" for an auth failure. The token is sent only to GitHub, never to the asset download host.
+**Requirements:** Node.js on `PATH` (the updater runs the release's `bin/install.js`), and, if the repository is private, GitHub access: run `gh auth login` once, or set `GITHUB_TOKEN`/`GH_TOKEN`. When a token is available the updater uses it, which also avoids GitHub's anonymous rate limit. Without access the updater stops with `AUTH_REQUIRED` or `ACCESS_DENIED`; it never reports "no releases" for an auth failure. The token is sent only to GitHub, never to the asset download host.
 
 ### Preview First (Dry-Run)
 ```bash
