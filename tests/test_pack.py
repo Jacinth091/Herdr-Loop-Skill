@@ -38,6 +38,18 @@ class RolePackTests(unittest.TestCase):
         return subprocess.run([sys.executable, str(ACTIVATE), "--run-dir", str(self.repo / ".herdr-loop" / self.config["run_id"]), *args],
                               capture_output=True, text=True, env=env)
 
+    def use_standalone_config(self):
+        self.config = {
+            "run_id": "standalone-one-off",
+            "execution_mode": "standalone",
+            "agents": {"workers": [{
+                "name": "solo_worker", "kind": "codex",
+                "task": "Fix the scoped behavior. Preserve unrelated dirty files and report what you checked.",
+            }]},
+        }
+        self.save()
+        return self.repo / ".herdr-loop" / self.config["run_id"]
+
     def test_sqlite_pilot_shipped_inside_controller(self):
         pilot = ROOT / "skills" / "herdr-engineering-loop" / "scripts" / "herdr_ledger.py"
         self.assertTrue(pilot.is_file())
@@ -86,7 +98,9 @@ class RolePackTests(unittest.TestCase):
         self.assertIn("BLOCKED: HERDR_WORKER_UNAVAILABLE", roles[1]["prompt"])
         self.assertIn("/herdr-worker", roles[2]["prompt"])
         self.assertIn("NO tests", roles[2]["prompt"])
-        self.assertIn("--dangerously-skip-permissions", (base / "role-packets/worker_t01.md").read_text(encoding="utf8"))
+        worker_packet = (base / "role-packets/worker_t01.md").read_text(encoding="utf8")
+        self.assertIn("normal restricted permissions", worker_packet)
+        self.assertNotIn("--sandbox --dangerously-skip-permissions", worker_packet)
 
     def test_all_codex_roles_explicitly_ban_internal_subagents(self):
         self.config["agents"]["manager"]["kind"] = "codex"
@@ -285,6 +299,78 @@ class RolePackTests(unittest.TestCase):
         env.pop("HERDR_ENV", None)
         self.assertNotEqual(self.activate(env=env).returncode, 0)
 
+    def test_standalone_binds_one_worker_without_managed_artifacts(self):
+        run = self.use_standalone_config()
+        result = self.bind()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse((run / "SESSION.md").exists())
+        self.assertFalse((run / "ledger.sqlite").exists())
+        self.assertFalse((run / "BACKEND.json").exists())
+        activation = json.loads((run / "ACTIVATION.json").read_text(encoding="utf8"))
+        self.assertEqual(activation["execution_mode"], "standalone")
+        self.assertEqual(len(activation["agents"]), 1)
+        worker = activation["agents"][0]
+        self.assertFalse(worker["requires_role_ready"])
+        self.assertEqual(worker["signal_transport"], "manual-direct")
+        self.assertIn("human's direct assignment", worker["prompt"])
+        self.assertIn("Fix the scoped behavior", worker["prompt"])
+        self.assertNotIn("TASK_START <", worker["prompt"])
+        self.assertNotIn("ROLE_READY <", worker["prompt"])
+        self.assertIn("does not create a governed run, ledger", (run / "ACTIVATE.md").read_text(encoding="utf8").lower())
+        self.assertIn("no SESSION.md", result.stdout)
+
+    def test_standalone_binds_a_claude_worker_without_herdr_metadata(self):
+        run = self.use_standalone_config()
+        self.config["run_id"] = "standalone-claude"
+        self.config["agents"]["workers"][0]["kind"] = "claude"
+        self.save()
+        result = self.bind()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        activation = json.loads((run.parent / self.config["run_id"] / "ACTIVATION.json").read_text(encoding="utf8"))
+        worker = activation["agents"][0]
+        self.assertEqual(worker["kind"], "claude")
+        self.assertFalse(worker["requires_role_ready"])
+        self.assertIn("Do not require Herdr registration", worker["prompt"])
+        self.assertNotIn("TASK_START <", worker["prompt"])
+
+    def test_standalone_accepts_dirty_checkout_without_changing_it(self):
+        dirty = self.repo / "unrelated.txt"
+        dirty.write_text("preserve this dirty file\n", encoding="utf8")
+        before = dirty.read_bytes()
+        run = self.use_standalone_config()
+        result = self.bind()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(dirty.read_bytes(), before)
+        self.assertIn(str(self.repo), (run / "role-packets" / "solo_worker.md").read_text(encoding="utf8"))
+
+    def test_standalone_rejects_governed_run_id_reuse(self):
+        self.assertEqual(self.bind().returncode, 0)
+        governed_run = self.repo / ".herdr-loop" / self.config["run_id"]
+        self.config = {
+            "run_id": self.config["run_id"],
+            "execution_mode": "standalone",
+            "agents": {"workers": [{"name": "solo_worker", "kind": "claude", "task": "Do the assigned scoped task."}]},
+        }
+        self.save()
+        result = self.bind("--force")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Cannot bind standalone mode over a governed run", result.stderr)
+        self.assertTrue((governed_run / "SESSION.md").is_file())
+
+    def test_standalone_activation_does_not_use_managed_dispatcher(self):
+        run = self.use_standalone_config()
+        self.assertEqual(self.bind().returncode, 0)
+        env = dict(os.environ, HERDR_ENV="1")
+        result = self.activate(env=env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Standalone assignment is delivered directly", result.stderr)
+
+    def test_standalone_worker_contract_keeps_direct_and_governed_modes_distinct(self):
+        skill = (ROOT / "skills" / "herdr-worker" / "SKILL.md").read_text(encoding="utf8")
+        for required in ("Standalone Mode", "Governed Mode", "stale `CONTINUATION_CONTEXT.md`",
+                         "independent verification", "explicit deny", "dirty"):
+            self.assertIn(required.lower(), skill.lower())
+
     def test_herdr_mock_activation_uses_pinned_agent_names_and_prompts(self):
         self.assertEqual(self.bind().returncode, 0)
         if os.name == "nt":
@@ -314,6 +400,65 @@ class RolePackTests(unittest.TestCase):
         self.assertIn("agent prompt architect", contents)
         self.assertIn("agent prompt dispatcher", contents)
         self.assertNotIn("agent get worker_t01", contents)
+
+    def test_prompt_submission_receipt_prevents_blind_replay(self):
+        self.assertEqual(self.bind().returncode, 0)
+        spec = importlib.util.spec_from_file_location("activate_roles_receipt_test", ACTIVATE)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        preflight = subprocess.CompletedProcess([], 0, "agent exists", "")
+        with mock.patch.dict(os.environ, HERDR_ENV="1"), \
+                mock.patch.object(module.shutil, "which", return_value="herdr"), \
+                mock.patch.object(module.subprocess, "run", return_value=preflight), \
+                mock.patch.object(module, "_run_prompt", return_value=subprocess.CompletedProcess([], 0, "", "")) as prompts:
+            self.assertEqual(module.main(["--run-dir", str(self.repo / ".herdr-loop" / self.config["run_id"])]), 0)
+            self.assertEqual(prompts.call_count, 2)
+            self.assertEqual(module.main(["--run-dir", str(self.repo / ".herdr-loop" / self.config["run_id"])]), 2)
+            self.assertEqual(prompts.call_count, 2)
+        session = self.repo / ".herdr-loop" / self.config["run_id"] / "SESSION.md"
+        receipts = module._read_receipts(session)[1]
+        self.assertEqual([x["status"] for x in receipts], ["OUTCOME_UNCERTAIN", "OUTCOME_UNCERTAIN"])
+        self.assertTrue(all(len(x["operation_id"]) == 24 for x in receipts))
+
+    def test_partial_prompt_timeout_requires_reconciliation_and_allows_one_retry(self):
+        self.assertEqual(self.bind().returncode, 0)
+        spec = importlib.util.spec_from_file_location("activate_roles_partial_test", ACTIVATE)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        preflight = subprocess.CompletedProcess([], 0, "agent exists", "")
+        run_dir = self.repo / ".herdr-loop" / self.config["run_id"]
+        with mock.patch.dict(os.environ, HERDR_ENV="1"), \
+                mock.patch.object(module.shutil, "which", return_value="herdr"), \
+                mock.patch.object(module.subprocess, "run", return_value=preflight), \
+                mock.patch.object(module, "_run_prompt", side_effect=[
+                    subprocess.CompletedProcess([], 0, "", ""),
+                    subprocess.TimeoutExpired(["herdr", "agent", "prompt"], 30, stderr="request timed out"),
+                ]) as prompts:
+            self.assertEqual(module.main(["--run-dir", str(run_dir)]), 2)
+            self.assertEqual(prompts.call_count, 2)
+
+        session = run_dir / "SESSION.md"
+        receipts = module._read_receipts(session)[1]
+        self.assertEqual([x["status"] for x in receipts], ["SUBMITTED", "OUTCOME_UNCERTAIN"])
+        receipts[0]["status"] = "CONFIRMED_APPLIED"
+        receipts[0]["evidence"] = "matching recipient artifact observed"
+        receipts[1]["status"] = "CONFIRMED_NOT_APPLIED"
+        receipts[1]["evidence"] = "authoritative target readback proved no prompt receipt"
+        module._write_receipts(session, receipts)
+        retry_id = receipts[1]["operation_id"]
+
+        with mock.patch.dict(os.environ, HERDR_ENV="1"), \
+                mock.patch.object(module.shutil, "which", return_value="herdr"), \
+                mock.patch.object(module.subprocess, "run", return_value=preflight), \
+                mock.patch.object(module, "_run_prompt", return_value=subprocess.CompletedProcess([], 0, "", "")) as retry:
+            self.assertEqual(module.main(["--run-dir", str(run_dir), "--roles", "delegator"]), 0)
+            self.assertEqual(retry.call_count, 1)
+            self.assertEqual(module.main(["--run-dir", str(run_dir), "--roles", "delegator"]), 2)
+            self.assertEqual(retry.call_count, 1)
+        receipt = next(x for x in module._read_receipts(session)[1] if x["operation_id"] == retry_id)
+        self.assertEqual(receipt["attempts"], 2)
+        self.assertEqual(receipt["retry_count"], 1)
+        self.assertEqual(receipt["status"], "OUTCOME_UNCERTAIN")
 
 
     def test_generated_roles_have_explicit_signal_recipients(self):
@@ -360,8 +505,52 @@ class RolePackTests(unittest.TestCase):
                 self.assertIn("references/signals.md", text)
                 self.assertIn("ROLE_READY", text)
                 self.assertIn("access", text.lower())
-                if role != "herdr-manager":
-                    self.assertTrue((path / "references" / "access-triage.md").exists())
+                self.assertTrue((path / "references" / "access-triage.md").exists())
+
+    def test_access_recovery_is_self_contained_for_installed_roles(self):
+        role_names = ("herdr-manager", "herdr-delegator", "herdr-lead", "herdr-worker", "herdr-verifier", "herdr-critic")
+        copies = []
+        for role in role_names:
+            with self.subTest(role=role):
+                triage = (ROOT / "skills" / role / "references" / "access-triage.md").read_text(encoding="utf8")
+                copies.append(triage)
+                self.assertIn("same authorized in-scope command", triage.lower())
+                self.assertIn("explicit deny", triage.lower())
+                self.assertIn("never self-grant", triage.lower())
+        self.assertEqual(len(set(copies)), 1)
+        manager = (ROOT / "skills" / "herdr-manager" / "SKILL.md").read_text(encoding="utf8")
+        self.assertIn("references/access-triage.md", manager)
+
+    def test_agy_normal_default_and_isolated_bypass_are_bounded(self):
+        for rel in (
+            "README.md",
+            "skills/herdr-engineering-loop/SKILL.md",
+            "skills/herdr-delegator/SKILL.md",
+        ):
+            with self.subTest(path=rel):
+                content = (ROOT / rel).read_text(encoding="utf8")
+                self.assertNotIn("--sandbox --dangerously-skip-permissions", content)
+        for rel in (
+            "skills/herdr-engineering-loop/references/herdr-cli.md",
+            "skills/herdr-delegator/references/herdr-cli.md",
+        ):
+            with self.subTest(path=rel):
+                content = (ROOT / rel).read_text(encoding="utf8").lower()
+                self.assertIn("--sandbox --dangerously-skip-permissions", content)
+                self.assertIn("disposable worktree", content)
+                self.assertIn("cannot verify native approval", content)
+        capabilities = (ROOT / "skills/herdr-engineering-loop" / "references" / "permission-capabilities.md").read_text(encoding="utf8")
+        self.assertIn("Windows", capabilities)
+        self.assertIn("--dangerously-skip-permissions", capabilities)
+        self.assertIn("Auto mode", capabilities)
+
+    def test_standalone_docs_explain_no_managed_run_and_self_verification(self):
+        readme = (ROOT / "README.md").read_text(encoding="utf8")
+        operations = (ROOT / "docs" / "OPERATIONS.md").read_text(encoding="utf8")
+        self.assertIn("Standalone Worker task (no managed run)", readme)
+        self.assertIn("SESSION.md", readme)
+        self.assertIn("label them self-verification", operations)
+        self.assertIn("does not start the agent", operations)
 
     def test_codex_override_routing_claude_manager_codex_delegator(self):
         self.config["agents"]["workers"][0]["kind"] = "codex"

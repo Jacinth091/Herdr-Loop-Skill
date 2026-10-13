@@ -1,31 +1,22 @@
-# Access-Denied Preflight and Escalation
+# Access and permission recovery
 
-`Access is denied`, `EPERM`, `EACCES`, `WinError 5`, and `permission denied` are **symptoms, not instructions to elevate**. Distinguish a wrong pane/session, sandbox policy, file ACL, Herdr socket failure, and protected external services before selecting the smallest next step. Do not auto-run as Administrator, disable the sandbox, change ACLs/owner recursively, weaken PowerShell/system policy, expose a Docker TCP endpoint, copy credentials or retry indefinitely.
+An access error is evidence to classify, not permission to broaden. First identify your active mode, human/task authority, role, exact operation, and target. Standalone local work does not require Herdr registration or `herdr status server`; inspect Herdr origin only when the requested operation actually needs Herdr.
 
-## Preflight before starting agents or executing an assigned task
+For the same authorized in-scope command blocked only by this CLI's supported approval boundary, request permission through this agent's own native execution tool and wait for the real decision. A prompt is a request, not a grant. Explicit deny is terminal. Unknown or unavailable approval stays a blocker. Never self-grant, route around a deny, switch shells/providers, auto-elevate, alter ACLs, disable sandboxing, or press approval keys in another pane.
 
-1. **Origin:** In the assigned pane, check `HERDR_ENV=1`, `herdr --version`, `herdr status server`, `herdr agent get <assigned-name>`. Compare observed Herdr pane/workspace/cwd with the role packet and `SESSION.md`. A `HERDR_ENV` variable by itself does not prove agent registration. Run `herdr agent list` or pane inspection only when needed.
-2. **Code provenance:** Confirm worktree path, branch, fixed base and clean/unrelated changes with `git rev-parse`, `git branch --show-current`, `git status --short`, `git worktree list --porcelain` (for code roles). Do not run in an arbitrary current directory.
-3. **Narrow filesystem check:** Worker should be able to create/remove a harmless temporary file **only inside its own** `.herdr-loop/`, not the full repo or another worktree. A successful probe proves only that particular path is writable. No secrets or full environment dumps in diagnostics.
-4. **Signal path:** Resolve the exact recipient from the local role packet, check `herdr agent get <recipient>`, and perform the `ROLE_READY` handshake. An agent whose recipient is missing or whose own pane is not registered does not start implementation.
-5. **Verification services:** Only an authorized Delegator/Verifier checks Docker/WSL/database access and only when needed for approved tests. Confirm disposable DB identity and serial test lock first. A Windows `npipe` failure is distinct from source-code test failure.
-
-## Classify, report, and route
-
-| Observation | Likely class | Required response |
+| Evidence | Class | Action |
 | --- | --- | --- |
-| `HERDR_ENV` missing, wrong pane, or `herdr agent get` cannot confirm role | `HERDR_ORIGIN_UNCONFIRMED` | Stop; inspect actual Herdr workspace and use a valid Herdr-spawned agent, never Codex `spawn_agent` |
-| Herdr CLI cannot reach running server/socket or reports denied | `HERDR_TRANSPORT_DENIED` | Record exact command, server/session and redacted error; ask Delegator/human to repair socket/session context |
-| Assigned `.herdr-loop` or worktree write probe denied | `WORKTREE_WRITE_DENIED` | Confirm actual cwd, permitted root and ownership; no blind elevation or sandbox disabling; Delegator chooses authorized reprovisioning |
-| CLI permits read-only operations but worker edits blocked by its sandbox | `AGENT_SANDBOX_DENIED` | Preserve isolation; escalate for human review or choose a pre-approved narrower writable worktree |
-| Docker CLI works outside agent but `npipe:////./pipe/docker_engine` denied inside | `DOCKER_PIPE_DENIED` | Treat as verification **environment** block; human may approve a separate trusted verifier/pane, no daemon/ACL reconfiguration by agent |
-| WSL launch errors `E_ACCESSDENIED` from agent | `WSL_ACCESS_DENIED` | Distinguish sandbox/process restrictions from product failure; do not mutate WSL policy |
-| Named destination absent, ambiguous, or prompt denied | `SIGNAL_TRANSPORT_UNAVAILABLE` | Keep Markdown, report missing recipient/route, no fabricated delivery; retry only after observed repair |
-| OS-denied specific file outside assigned root | `OUT_OF_SCOPE_ACCESS_DENIED` | Do not seek access; task needs a narrower brief or authorized handoff |
-| Cause unknown | `ACCESS_DENIED_UNCLASSIFIED` | Stop at the smallest failing step and escalate with redacted evidence |
+| Herdr env/pane/agent not confirmed | `HERDR_ORIGIN_UNCONFIRMED` | Stop only Herdr-dependent operations; ordinary standalone local work can continue. |
+| Herdr executable/server/IPC unavailable | `HERDR_CLI_UNAVAILABLE` / `HERDR_TRANSPORT_DENIED` | Report the exact boundary; do not assume an Administrator/ACL fix. |
+| Harness blocks an in-scope command | `AGENT_SANDBOX_DENIED` | Request the exact command through the current harness if it offers native approval. |
+| Native reviewer/user rejects or explicit deny matches | `DENIED` | Stop that operation; do not try an equivalent route. |
+| Active approval path is absent or unverified | `APPROVAL_UNAVAILABLE` / `UNVERIFIED` | Preserve the task and state the single user-owned next step. |
+| OS ACL/process token/WinError 5 blocks access | `OS_ACCESS_DENIED` | Do not seek admin or edit ACLs; report the target and user-owned repair. |
+| Prompt/command may have acted before timeout | `OUTCOME_UNCERTAIN` | Inspect the same recipient and correlated task artifact/postcondition before any retry; idle status is not proof. |
+| Operation exceeds task, path, or role | `OUT_OF_SCOPE` | Do not request permission for it. |
 
-## Blocker evidence minimum
+The local `tools/access_probe.py` may classify platform, explicit CLI kind/version, Herdr origin, and a narrow `.herdr-loop` write probe. It cannot see the active approval UI or grant permissions. `approval_capability: unverified` is not evidence that approval is unavailable. A local write probe is not proof of shell or Herdr access.
 
-Save to worker-local `REPORT.md`, verification report, or Delegator's `SESSION.md`: `run/task/role`, **actual** Herdr name and pane (if observed), cwd/worktree, CLI executable/version (if relevant), exact failing command **without secret args**, protected target category, exit code and short redacted error, whether the same operation is allowed from an ordinary human-owned shell (if human confirms), last successful read-only check, and proposed smallest approval/reprovisioning action. Distinguish `ENV_BLOCKED` from `PRODUCT_FAIL`.
+For governed Markdown runs, keep stable prompt operation IDs and sanitized state in `SESSION.md`; `SUBMITTING`/`SUBMITTED` is not delivery. Reconcile before marking `CONFIRMED_APPLIED` or `CONFIRMED_NOT_APPLIED`; only one retry follows proven absence. Standalone tasks have no run ledger: keep minimal evidence with the task/report and do not create a separate permission store.
 
-If no file is writable, leave the error plainly in the agent pane and inform the human/Delegator through any already-authorized channel. Do not pretend a report file or signal exists. A bounded single recheck is acceptable after the environment changes; no speculative retries or permission expansion.
+Role boundaries still apply. A governed Worker never runs tests; standalone Worker may run only scoped, authorized self-checks and must label them as such. A Verifier needs `VERIFY_START` plus the lock; a Critic stays read-only; Manager/Delegator/Lead authority remains limited to the approved run.

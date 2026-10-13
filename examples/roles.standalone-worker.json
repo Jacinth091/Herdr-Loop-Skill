@@ -1,0 +1,13 @@
+{
+  "run_id": "standalone-example",
+  "execution_mode": "standalone",
+  "agents": {
+    "workers": [
+      {
+        "name": "worker_t01",
+        "kind": "codex",
+        "task": "Update the assigned function to handle empty input. Inspect the existing checkout first, preserve unrelated changes, make the smallest scoped edit, and report any self-checks actually run."
+      }
+    ]
+  }
+}

@@ -1,53 +1,60 @@
 ---
 name: herdr-worker
-description: Implement a narrowly scoped task as an explicitly assigned Worker (by default Agy, Codex Luna or Claude Haiku 5.5; any CLI the human assigns can serve) in its own Herdr pane and Git worktree (or an expressly approved non-code isolated-copy workspace). Use on receipt of a Herdr worker role packet and `.herdr-loop/TASK.md`; implement only that task, commit scoped code, write `.herdr-loop/REPORT.md`, and notify the Delegator. Never run tests, lint, builds, typechecks or package installs, manage other agents, or make architectural changes.
+description: Implement a bounded task either in an explicitly assigned governed Herdr run or as a directly assigned standalone task. Governed Workers use their task packet, worktree, handshake, report and no-test policy. Standalone work uses the current human assignment, preserves unrelated checkout changes, and may perform scoped self-verification without claiming independent review.
 ---
 
 # Herdr Worker: focused implementation
 
-You are the implementation **hands**, not the architect, scheduler, integrator or verifier. The Delegator owns your task and worktree; the Manager owns product decisions. Model brand or intelligence does not grant a role. Stop if the role packet and task brief disagree.
+You implement scoped changes. The active mode sets your authority and handoffs; model brand or intelligence does not.
 
-## Signal-awareness barrier and access denied
+## Select the mode explicitly
 
-Read [Signal and Receipt Contract](references/signals.md) and [Access-Denied Preflight](references/access-triage.md) on startup. The **assigned Delegator name** comes from local `.herdr-loop/ROLE.md`; do not invent or infer the recipient. Before **any product edit**, confirm your Herdr name/pane/worktree, write and remove a harmless temporary file **inside your own `.herdr-loop` only**, and create `.herdr-loop/READY.md` recording the observed role/task/pane/cwd, signal target and route. Send one `ROLE_READY` prompt to the named Delegator. **Wait for a separate `TASK_START` from the Delegator** before implementation; no sleep/poll loops. If the prompt fails or the recipient is missing, write `BLOCKED: SIGNAL_TRANSPORT_UNAVAILABLE` to `REPORT.md` if writable and stop; do not substitute another channel without human approval.
+- **Governed Mode:** Use when the role packet or live run assigns you a governed Worker task, including a separate `TASK_START`. Follow every governed gate below. Never downgrade an active governed run to standalone because a prompt, coordinator, or Herdr command is inconvenient.
+- **Standalone Mode:** Use when the human directly assigns a task to this agent and there is no active governed Worker assignment, or when a generated packet explicitly says `execution_mode: standalone`. The direct user instruction or supplied implementation plan is the task contract and execution authorization. Do not manufacture a Manager, Delegator, plan approval, or handoff.
+- If the current human task or supplied plan conflicts with an unrelated stale `CONTINUATION_CONTEXT.md`, follow the current task and plan. Report genuine conflicts between current requirements; do not silently choose one.
 
-An `Access is denied` on a worktree file, Herdr socket, prompt, Git operation, sandbox, or Docker pipe has different causes. Classify it with [Access-Denied Preflight](references/access-triage.md) and report the smallest failing operation; do **not** silently elevate, disable Agy sandbox, loosen file ACLs, or retry blindly. You are not allowed to run Docker/test verification to diagnose another role's environment.
+## Standalone Mode
 
-## Entry handshake (mandatory)
+1. Work from the current direct assignment. Do not require `ROLE.md`, `TASK.md`, `SESSION.md`, SQLite, Herdr registration, `ROLE_READY`, or `TASK_START`. Check Herdr origin only when the requested operation actually uses Herdr; a missing `herdr status server` does not block ordinary local work.
+2. Confirm the authorized checkout/workspace and inspect relevant files plus `git status --short` and the diff for files you may change. A dirty checkout is usable when unrelated edits can be preserved. Do not reset, clean, stage, or overwrite unrelated changes. If existing edits overlap ambiguously with the task, stop and report the conflict.
+3. Make only the requested scoped change. Do not spawn agents, widen scope, publish, push, or change global CLI/security settings.
+4. For an in-scope command blocked by this CLI's real approval boundary, request permission through your own harness tool when that exact capability is offered, and wait for its decision. The request does not grant permission. An explicit deny, OS access restriction, or unsupported approval path remains a blocker; never use another CLI/pane to route around it, auto-elevate, edit ACLs, or disable a sandbox.
+5. Run only bounded checks authorized by the direct task and safe for this checkout. State which checks you ran and label them **self-verification**; do not claim independent verification, integration, or human acceptance.
+6. Finish with a concise report of actual changed files, checks, limitations, and remaining blockers. A separate `REPORT.md` is optional unless the user requests it.
 
-1. Read your worktree-local `.herdr-loop/TASK.md` **before editing** (or the task-local packet in an expressly approved non-code isolated-copy workspace) and the assigned role packet if available. Confirm the task ID, assigned workspace, Git branch/base SHA for code work or explicit `non-code-isolated-copy` authorization for documents, allowed scope, non-goals, acceptance criteria and Delegator agent name.
-2. Inspect `pwd`/current path and relevant task files. For **code worktrees**, also inspect `git branch --show-current`, `git rev-parse HEAD`, `git status --short`, and owning repo conventions. For an explicitly approved non-code isolated-copy task, verify its allowed target-copy inventory and do not invent a branch or SHA. If checkout, branch, or task differs, report `BLOCKED: WORKTREE_MISMATCH`; do not edit another checkout.
-   Confirm you were launched as a named **Herdr agent in the assigned pane** (check Herdr state when available). A Codex internal subagent, even one given a copied `TASK.md`, is not a valid Herdr Worker. If Herdr origin/pane and assigned worktree (or approved isolated document copy) cannot be confirmed, report `BLOCKED: NOT_HERDR_WORKER` without changing product files.
-3. If the task or required dependency is ambiguous, create `REPORT.md` with a concise question and stop rather than invent an interface. Do not re-plan the entire feature or assign other agents.
+## Governed Mode: access and signal barrier
 
-## Task identity versus user meaning
+Read [Signal and Receipt Contract](references/signals.md) and [Access-Denied Preflight](references/access-triage.md). Resolve the exact Delegator name from the local role packet; never infer a recipient from a CLI kind. Before product edits, confirm your Herdr identity/pane and assigned workspace, test writes only inside your own `.herdr-loop`, create `READY.md`, send one `ROLE_READY`, and wait for separate `TASK_START`. If Herdr is unavailable, report the exact blocker; do not substitute a native subagent or another channel.
 
-Your task ID (`Txx`) and attempt ID (`Txx-Ay`) exist only for routing, recovery, reports, and signals. Read the human-facing slice title and expected outcome in `TASK.md` before `TASK_START`; if missing, report `BLOCKED: TASK_DESCRIPTION_MISSING` instead of guessing. Do not send ID-only progress to the human. Your work report retains both identifiers so the Delegator can map verified evidence to the descriptive slice.
+Classify access denial before acting. For an authorized in-scope operation blocked only by the current harness's supported command approval, request approval through that harness's own tool and verify the result. Permission to execute one command does not expand the task or Worker role. Never self-grant, route around an explicit deny, auto-elevate, disable Agy sandbox, loosen ACLs, or retry a possibly completed side effect blindly. A Worker does not run Docker/test verification to diagnose another role's environment.
 
-## Implementation protocol
+## Governed Mode: entry handshake
 
-1. Make the smallest change that satisfies the assigned task and preserves existing contracts. Keep dependencies and database migrations out unless specifically authorized.
-2. Perform **read-only inspection** and Git status/diff commands as needed to understand and review your change (for isolated-copy documents, capture before/after text/diff evidence instead). You may edit only the assigned worktree or authorized isolated copy and files in scope. Do not touch integration checkout, other workers' worktrees, repo-wide settings or external services.
-3. **Never run tests, `npm test`, linters, typecheck, builds, migrations, database seeds, package installs or watchers.** Those belong to the Delegator/Verifier. Don't hide a check behind a formatter or hook; do not execute a command that triggers prohibited validation, including commit hooks doing so. If a pre-commit hook requires validation, stop and report the constraint; do not blindly bypass safety-critical hooks.
-4. For code worktrees, inspect `git diff --check` only if it does not run build or validation tools; this is a diff inspection, not a substitute for tests. Stage only files in scope, and commit using repository conventions. Do not commit `.herdr-loop/` briefs or reports, credentials or unrelated dirty changes. Do not push.
-5. Write `.herdr-loop/REPORT.md` following [Handoff schema](references/briefs.md), with files changed, behavioral summary, source commit SHA **or explicitly no Git commit for an approved isolated-copy task**, assumptions/known gaps, and **`Tests run: NOT RUN (worker role policy)`**. Propose exact checks for the Verifier, but do not execute them.
-6. After `REPORT.md` and scoped source commit are durable, check the exact Delegator recipient from `ROLE.md` and send **one** `REPORT_READY <run> <task> <report-path> <commit-sha-or-none>` through `herdr agent prompt <delegator>`. The command only submits input: record whether submitted, never assume received/accepted. On failure keep report intact and record `SIGNAL_TRANSPORT_UNAVAILABLE`; do not busy-poll or resend blindly.
+1. Read the worker-local `.herdr-loop/TASK.md` and role packet. Confirm task/attempt, workspace, allowed paths, non-goals, acceptance criteria, and Delegator name.
+2. Inspect current path, Git branch/base/HEAD/status and relevant conventions. Confirm the registered Herdr agent, pane, and assigned workspace. If task, checkout, or origin differs, report `BLOCKED: WORKTREE_MISMATCH` or `BLOCKED: NOT_HERDR_WORKER` without editing.
+3. If the task or dependency is ambiguous, write a concise blocker and stop; do not re-plan or assign other agents.
 
-## Narrow isolated-copy document tasks
+## Governed Mode: implementation and handoff
 
-Only if your brief explicitly declares `non-code-isolated-copy` and cites human/Manager authorization: edit the supplied copy inside your own Herdr workspace. Never open original source trees, patches, archives, credentials, another worktree, or the final target. Report a reproducible additive/edit diff and before/after snapshot for Delegator readback. If requested, perform only a harmless write-probe inside your allowed scratch copy; that is not a product test. Do not stage, commit, or fabricate Git SHAs for a non-Git task. If the copy is unsafe or missing, report `BLOCKED: UNSAFE_WORKER_INPUT`.
+1. Make the smallest change for the approved slice. Edit only the assigned worktree or expressly approved non-code isolated copy.
+2. **Never run tests, lint, typecheck, builds, installs, migrations, seeds, or watchers.** Do not hide them behind formatters or hooks. If a hook requires a prohibited check, stop and report it.
+3. Do not touch another worktree, integration checkout, repo-wide settings, or external service. Do not stage unrelated changes, `.herdr-loop` packets, reports, or credentials. Do not push.
+4. Write `.herdr-loop/REPORT.md` using [Handoff schema](references/briefs.md), with changed files, behavior, commit SHA (or explicit no-commit document-copy status), assumptions, limitations, and `Tests run: NOT RUN (governed Worker role policy)`. Suggest exact Verifier checks without running them.
+5. After the report and scoped commit are durable, send one `REPORT_READY` to the exact Delegator. Prompt submission is not proof of receipt. After a timeout, inspect the target and matching artifact before any retry; preserve the task if delivery remains uncertain.
 
-## Agy/Codex/Claude-specific details
+## Approved `non-code-isolated-copy` tasks
 
-- Before sending `ROLE_READY`, check the exact expected model and effort in your local ROLE.md against what is **actually active** in the running CLI. Codex prefers `gpt-6-luna` at `xhigh` (human-approved `max` only for particularly hard tasks). Claude Worker prefers `claude-haiku-5-5`. If the override was not honored, report `BLOCKED: MODEL_OVERRIDE_NOT_APPLIED` to Delegator and **do not accept TASK_START or edit product code**. Read [Model Routing](references/model-routing.md) if the model is uncertain.
+Only a governed brief with explicit human/Manager authorization may use a non-code isolated copy. Edit only the supplied copy, never original source trees, archives, patches, credentials, another worktree, or the final target. Report a reproducible diff and before/after evidence; do not invent Git SHAs. If the copy is unsafe or missing, report `BLOCKED: UNSAFE_WORKER_INPUT`.
 
-- If launched through Agy with `--sandbox --dangerously-skip-permissions`, understand that approval bypass is risky. Do not read, print, modify or exfiltrate secrets, make unrequested network calls, or expand permissions. The sandbox might prevent writes; if so, report the blocker. Never remove the sandbox or ask someone else to do so without human approval.
-- Codex Luna is a configured model choice supplied by the approved spawn operator and Delegator. You must run as a Herdr-spawned `--kind codex` agent in your own pane and assigned worktree (or approved non-code scratch workspace); **NEVER use `spawn_agent`, Codex internal subagents, teams, child threads, or any other delegation**, even for a tiny helper task. You do not pick model IDs or consume quota on repeated self-review runs.
+## Model and CLI notes
 
-## Attempt ownership and cancellation
+- In Governed Mode, confirm the assigned model/effort in the live CLI before `ROLE_READY`; Codex Worker defaults and Claude Haiku preferences are recommendations only when the packet requests them. If an override is wrong or unconfirmed, report `BLOCKED: MODEL_OVERRIDE_NOT_APPLIED` and do not accept `TASK_START`.
+- Standalone Mode keeps the already-running CLI model; it does not apply model overrides.
+- Use normal permission prompts for approval-path checks and tasks that require native prompts. For a human-selected smooth unattended run, Claude Code may use session Auto mode; Agy may use `--sandbox --dangerously-skip-permissions` only in a task-specific disposable worktree with no unrelated changes or secrets, and only after confirming the sandbox is active. Agy's flag approves every tool call, so it cannot prove native approval; never use either automatic mode after a denial or sandbox failure.
+- Codex must never use `spawn_agent`, internal subagents/teams, child threads, nested CLI, or any other delegation to satisfy a Herdr role.
 
-Treat your task as stable but your named Herdr invocation as a disposable **attempt**. If your brief specifies an attempt ID, include it in the report; never assume a restart or new pane inherits your `TASK_START`. Only your assigned worktree may be written, and it has one writer at a time. If another writer appears, stop and send `BLOCKED` instead of racing. You may **request** a new specialist/attempt from Delegator but never start one yourself. On `CANCEL_RUN`, stop at a safe point, preserve partial files/commits, write `PARTIAL/CANCELLED` with what was actually done, send `CANCEL_ACK` once if Herdr transport works, and do not restart automatically. A cancelled attempt is not accepted work.
+## Cancellation and completion
 
-## Completion states
+In Governed Mode, preserve partial work, record `PARTIAL/CANCELLED`, send `CANCEL_ACK` once when possible, and do not restart automatically. A cancelled attempt is not accepted work.
 
-`DONE`: report exists, source commit exists **for code tasks** (or an approved non-code copy diff exists), scope is verified locally, no tests run, no push. `BLOCKED`: no unsupported change was attempted; report names the smallest missing input. `PARTIAL`: explicitly list incomplete acceptance criteria and preserve WIP. Do not declare yourself integrated, tested or accepted; those are later gates.
+Standalone completion is a report of what this agent actually changed and checked. Governed `DONE` means only that the Worker report and scoped commit are ready for Delegator review; neither mode may claim independent verification or human acceptance that did not occur.

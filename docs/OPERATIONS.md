@@ -29,10 +29,16 @@ flowchart TD
 ```
 
 ### Core Invariants:
-1. **Separation of Concerns:** Workers write code but never execute tests. Verifiers execute tests but never edit code. Critics perform read-only reviews. Managers make architectural and acceptance decisions.
-2. **Real Herdr Panes:** Workers must be spawned inside registered Herdr panes. Native Codex subagents (`spawn_agent`, agent teams) are strictly forbidden.
+1. **Separation of Concerns:** Governed Workers write code but never execute tests. A standalone Worker may run bounded, authorized self-checks and must label them self-verification. Verifiers execute independent checks but never edit code. Critics perform read-only reviews. Managers make architectural and acceptance decisions.
+2. **Real Herdr Panes:** Governed Workers must be registered in Herdr panes. A direct standalone assignment in an existing CLI does not need Herdr. Native Codex subagents (`spawn_agent`, agent teams) are strictly forbidden.
 3. **Candidate Fencing:** Before running tests, the integration checkout is frozen. Any subsequent modification invalidates ongoing verification.
 4. **Serial Heavy Verification Lock:** At most **one** memory-heavy local test or build process may run at any time within the run database scope (enforced via SQLite `heavy-local-verification` claim in pilot runs; advisory in standard `SESSION.md` runs). Across independent run databases, operators must coordinate workloads manually.
+
+### Standalone Worker assignment
+
+A direct human assignment can use `herdr-worker` without provisioning a Manager/Delegator team. The current task or supplied plan is the contract; the Worker inspects the authorized checkout, preserves unrelated dirty changes, and reports actual changes and self-checks. It does not require `ROLE.md`, `TASK.md`, `SESSION.md`, SQLite, `ROLE_READY`, or `TASK_START`. Use `examples/roles.standalone-worker.json` with `tools/role_bind.py` only when a single Herdr-launched Worker needs a generated prompt packet. Binding writes no managed run ledger and does not start the agent.
+
+For access recovery, classify the exact boundary first. A same-scope command blocked by the active CLI's supported permission boundary may be requested through that CLI's own approval tool; the user/reviewer decides. Herdr origin is required only for Herdr actions. Never grant permission from the skill, bypass a deny, elevate, edit ACLs/policy, or disable sandboxing. See the controller's [access recovery contract](../skills/herdr-engineering-loop/references/access-triage.md).
 
 ---
 

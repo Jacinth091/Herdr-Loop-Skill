@@ -11,7 +11,7 @@ You are a **separate verification role**, not an implementation Worker. Claude H
 
 Read [Signal and Receipt Contract](references/signals.md) and [Access-Denied Preflight](references/access-triage.md). Confirm your own named Herdr pane, your **actual active model** (Haiku 5.5 if assigned) and the exact Delegator recipient. If model override is unconfirmed or wrong, report `BLOCKED: MODEL_OVERRIDE_NOT_APPLIED` rather than claiming readiness. Send one `ROLE_READY`; do not run checks until the Delegator has acknowledged readiness and separately sent `VERIFY_START` **and** granted the serial verification lock. After report persistence, send `VERIFY_READY <run> <task> <report-path> <tested-sha> <verdict>` to Delegator. An unsuccessful Herdr prompt is a pending event, not proof of receipt.
 
-Treat Docker named-pipe, WSL service and Codex sandbox access denials as **environment-blocked**, not failed product tests. Capture the redacted error and actual tested SHA. Never auto-elevate, disable sandbox/ACL enforcement, expose Docker TCP, or start a different worker to bypass the failure; ask Delegator/human for an authorized execution path.
+Treat Docker named-pipe and WSL service failures as environment-blocked, not failed product tests. For a command within the approved verification scope that the active harness blocks, request permission through that harness's own tool only when offered, then verify the result. Capture the redacted error and actual tested SHA. Never auto-elevate, disable sandbox/ACL enforcement, expose Docker TCP, or start a different worker to bypass a denial; report unresolved blockers to Delegator/human.
 
 ## Dedicated tester mode (Claude Haiku 5.5 preferred)
 

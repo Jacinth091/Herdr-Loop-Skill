@@ -49,8 +49,7 @@ The skill operates entirely through local Markdown packets, Git commits, and sta
 - Anyone needing auditable provenance: knowing exactly which agent wrote what commit, what tests ran at what SHA, and what the human authorized.
 
 ### When NOT to use it:
-- **Trivial single-file changes:** If you just need a one-line bugfix, an ordinary single-agent prompt is faster.
-- **No Herdr session:** The skill coordinates agents through Herdr panes and workspaces (`HERDR_ENV=1`); it does not manage processes outside Herdr.
+- **No Herdr session:** Governed multi-agent runs need Herdr panes and workspaces (`HERDR_ENV=1`). A directly assigned Standalone Worker task can run in an existing CLI and checkout without Herdr; Herdr is needed only if you ask it to start/register that Worker or perform another Herdr operation.
 - **Unattended auto-deployment:** The skill requires human authorization for execution grants, privileged resources, and final promotions; it will never automatically push to production or merge PRs.
 
 ---
@@ -62,7 +61,7 @@ The skill operates entirely through local Markdown packets, Git commits, and sta
 | **Manager** | `herdr-manager` | Architectural lead; approves `PLAN.md`, defines human-facing task titles, renders final acceptance verdicts. | Never writes implementation code, dispatches workers, or runs tests. |
 | **Delegator** | `herdr-delegator` | Dispatcher & integrator; provisions worktrees, briefs workers, reviews commits, integrates code, manages serial test lock. | Never invents architectural requirements or bypasses test gates. |
 | **Lead** | `herdr-lead` | Budget option: one agent does both the Manager and Delegator jobs (plan, dispatch, integrate, verify). Builds on `herdr-manager` + `herdr-delegator`. | Never implements or acts as Worker/Verifier/Critic. You approve the plan before any worker starts and give final acceptance. |
-| **Worker** | `herdr-worker` | Task implementer; implements exactly one slice in an isolated Git worktree; writes source code and `REPORT.md`. | **Strictly forbidden** from running tests, builds, linters, typechecks, or package installs. |
+| **Worker** | `herdr-worker` | Implements one governed slice or a directly assigned standalone task. | Governed Workers never run tests/builds/installs; standalone Workers may run bounded, authorized self-checks and must label them self-verification. |
 | **Verifier** | `herdr-verifier` | Independent tester; runs approved sequential checks against the frozen integration SHA under a run-wide lock. | **Strictly forbidden** from editing application or test source files. |
 | **Critic** | `herdr-critic` | Read-only reviewer; inspects plan briefs and candidate Git diffs against architectural intent; reports findings. | Read-only. Never tests, runs code, or edits files. |
 | **Controller** | `herdr-engineering-loop` | Setup & bootstrap entrypoint; provisions topology, binds role packets, coordinates recovery. | Orchestration entrypoint; not a day-to-day engineering persona. |
@@ -74,13 +73,13 @@ The skill operates entirely through local Markdown packets, Git commits, and sta
 
 ## 4. Requirements and Safety Prerequisites
 
-1. **Herdr:** Installed and running. Live operations require an active session where `HERDR_ENV=1`.
+1. **Herdr:** Installed and running for governed operations and any task that starts or controls Herdr agents. Direct standalone work in an already-running CLI does not require Herdr.
 2. **Coding Agent CLIs:** At least one supported CLI installed and authenticated:
    - Claude Code (`claude`)
    - Codex CLI (`codex`)
    - Agy CLI (`agy`)
 3. **Git:** Repository must have clean Git worktree support.
-4. **Permissions:** The skill runs under user permissions. **It never requires Administrator/root privileges and will never request sudo or disable sandboxes.**
+4. **Permissions:** The skill uses the active CLI's normal permission flow. For an authorized in-scope command, an agent may request approval through its own native tool when available and must wait for the real decision. It never requires Administrator/root privileges, changes ACLs/policies, or disables sandboxes.
 
 ---
 
@@ -173,6 +172,20 @@ sh ./install.sh
 
 Here is a worked walkthrough for a single-task run (e.g. adding token expiry handling):
 
+### Standalone Worker task (no managed run)
+
+For a direct assignment to an already-running CLI, give it the `herdr-worker` skill and the task. It can work in the authorized checkout without a Manager, Delegator, Herdr registration, role packet, `SESSION.md`, SQLite, or readiness handshake. It must preserve unrelated dirty changes, stop if edits overlap ambiguously, and label any authorized checks as self-verification.
+
+To prepare a single Worker packet for a Herdr-launched CLI, use [`examples/roles.standalone-worker.json`](examples/roles.standalone-worker.json):
+
+```powershell
+py -3 .\tools\role_bind.py --config .\examples\roles.standalone-worker.json --repo "C:\path\to\your\repo"
+```
+
+This creates a standalone prompt packet and does not start an agent or create `SESSION.md`/SQLite state. Start one agent only if the task needs Herdr, then paste the generated prompt from `.herdr-loop/standalone-example/ACTIVATE.md` into that assigned CLI.
+
+### Governed Herdr run
+
 ### Step 1: Open Herdr and Assign Panes
 Inspect available panes:
 ```bash
@@ -183,6 +196,8 @@ Start your Manager and Delegator agents in empty panes (specifying your actual p
 herdr agent start manager --kind claude --pane <pane-id-1>
 herdr agent start delegator --kind codex --pane <pane-id-2>
 ```
+
+Before a Herdr-dependent change, confirm the real `HERDR_ENV`, named agent and pane. Use `tools/access_probe.py` for bounded origin/transport checks; its approval capability is always `unverified` because it cannot inspect the active CLI approval UI. Check the current CLI's actual native permission path separately. The pack honors existing Codex approval/reviewer settings but never enables them; configured **Approve for me** may consume model quota. Antigravity's Windows controls differ from its macOS/Linux controls.
 
 ### Step 2: Configure the Run Roster
 Create a run configuration file `roles.json`:
@@ -258,21 +273,21 @@ Agents coordinate through explicit handoff envelopes sent as Herdr prompt hints:
 ### Strict Spawning Rules:
 - **No Codex Subagents:** Never use Codex's native `spawn_agent`, agent teams, or background child threads. All agents must exist in genuine Herdr panes.
 - **Cross-Model Launch Routing:** A Codex Delegator cannot launch a model-overridden Codex CLI worker directly. When this combination is needed, a **Claude Manager** performs the launch step via a `SPAWN-REQUEST.md` receipt.
-- **Agy Sandbox Flags:** When launching Agy with `--sandbox --dangerously-skip-permissions`, verify that directory isolation is effective and no machine secrets are accessible.
+- **Agy Permissions:** Keep the installed CLI's normal permission flow. Inspect `agy --help` before using a platform-specific sandbox option; never use `--dangerously-skip-permissions` as a routine launch or recovery path. Agy's permission controls differ on Windows, so verify the actual local approval path before relying on it.
 
 ---
 
 ## 9. Concurrency and Verification
 
 - **Default 1 Worker:** To keep RAM usage safe on 8 GB–16 GB laptops, runs default to one active worker. Up to 3 independent workers may run only after explicit human approval.
-- **Worker Test-Execution Ban:** Workers never run test suites or builds. This prevents context window waste from repeated test failures and protects machine memory.
+- **Worker Test-Execution Boundary:** Governed Workers never run tests or builds. Standalone Workers may run bounded, authorized self-checks and must report them as self-verification, not independent verification.
 - **Serial Heavy Test Lock:** In offline SQLite pilot runs, at most **one** memory-heavy local test process (pytest, npm test, docker build) holds the `heavy-local-verification` lock within the run database. In standard Markdown sessions, operators must serialize test executions across tasks. Across independent runs, operators must avoid concurrent heavy workloads.
 
 ---
 
 ## 10. Handling Blockers and Restarting
 
-- **`Access is denied` Triage:** Never auto-elevate to Administrator or disable sandboxes. Diagnose whether the block is a Herdr socket error, Docker Desktop named-pipe restriction, or worktree permissions using `tools/access_probe.py`.
+- **`Access is denied` Triage:** Classify the exact boundary with `tools/access_probe.py` when a Herdr operation needs it. For the same authorized in-scope command, request permission through the active CLI's own tool only when that tool offers a native approval path; wait for the decision and verify the result. The role pack does not change Codex approval settings or enable auto-review. If already configured, Codex `Approve for me` is honored by its own reviewer and may use model quota. Agy Windows permissions differ from macOS/Linux. Never self-grant, route around a deny, elevate, edit ACLs, or disable a sandbox.
 - **Closed or Stalled Panes:** For standard runs, inspect Herdr panes (`herdr pane list`) and reconcile `SESSION.md`. For offline SQLite pilot runs, run diagnostic recovery:
   ```powershell
   python skills/herdr-engineering-loop/scripts/herdr_ledger.py --run-dir <path-to-run-dir> recover

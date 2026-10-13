@@ -9,7 +9,7 @@ Own **what should be built and why**, not agent topology or implementation mecha
 
 ## Directed signaling
 
-Read [Signal and Receipt Contract](references/signals.md) on activation. Confirm your registered Herdr identity and the **Delegator's exact name** from the role packet; send `ROLE_READY` once, record any accepted decision in Markdown, and use `DECISION_READY` to wake the Delegator. Receive `DECISION_NEEDED` or `MANAGER_REVIEW_READY` only from the Delegator, then read its durable evidence before deciding. Do not confuse a submitted prompt or Herdr `done` with report receipt. If a prompt or local Herdr socket is access-denied, do not elevate or re-spawn through a Codex subagent: provide the `SIGNAL_TRANSPORT_UNAVAILABLE` blocker to the human and preserve the written decision. Do not issue routine chatter.
+Read [Signal and Receipt Contract](references/signals.md) on activation. Confirm your registered Herdr identity and the **Delegator's exact name** from the role packet; send `ROLE_READY` once, record any accepted decision in Markdown, and use `DECISION_READY` to wake the Delegator. Receive `DECISION_NEEDED` or `MANAGER_REVIEW_READY` only from the Delegator, then read its durable evidence before deciding. Do not confuse a submitted prompt or Herdr `done` with report receipt. Read [Access-Denied Preflight](references/access-triage.md) when Herdr or an in-scope command is blocked; request permission only through your own tool when it offers approval for that exact action. Preserve explicit denials and never elevate, alter ACLs, disable sandboxing, or re-spawn through a Codex subagent. Do not issue routine chatter.
 
 ## Human intent and run authority
 

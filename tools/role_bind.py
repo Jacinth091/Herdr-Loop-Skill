@@ -55,8 +55,12 @@ def spawn_owner(role, agent, config):
     return owner
 
 
-def resolve_preference(role, data, warnings):
+def resolve_preference(role, data, warnings, standalone=False):
     kind = data["kind"]
+    if standalone:
+        if data.get("model") or data.get("reasoning_effort"):
+            raise ValueError("Standalone mode uses the already-running CLI model; remove model/reasoning overrides")
+        return "", ""
     preference = PREFERENCES.get("codex_worker" if role == "worker" and kind == "codex" else
                                  "claude_worker" if role == "worker" and kind == "claude" else
                                  "claude_verifier" if role == "verifier" and kind == "claude" else
@@ -83,6 +87,9 @@ def read_and_validate(config_path, override_run=None):
     run_id = override_run or config.get("run_id", "")
     if not isinstance(run_id, str) or not RUN.fullmatch(run_id):
         raise ValueError("run_id must be a path-safe slug (letters, digits, underscore, hyphen)")
+    execution_mode = config.get("execution_mode", "governed")
+    if execution_mode not in ("governed", "standalone"):
+        raise ValueError("execution_mode must be 'governed' or 'standalone'")
     budget = config.get("max_active_workers", 1)
     if not isinstance(budget, int) or isinstance(budget, bool) or not (1 <= budget <= 3):
         raise ValueError("max_active_workers must be 1, 2 or 3")
@@ -100,7 +107,15 @@ def read_and_validate(config_path, override_run=None):
     roles = config.get("agents")
     if not isinstance(roles, dict):
         raise ValueError("agents must be an object")
-    if "lead" in roles:
+    if execution_mode == "standalone":
+        if set(roles) != {"workers"}:
+            raise ValueError("Standalone mode accepts exactly one agents.workers entry; it does not bind Manager/Delegator roles")
+        if not isinstance(roles.get("workers"), list) or len(roles["workers"]) != 1:
+            raise ValueError("Standalone mode requires exactly one Worker")
+        if config.get("state_backend") is not None:
+            raise ValueError("Standalone mode does not create SESSION.md or SQLite state; remove state_backend")
+        leaders = []
+    elif "lead" in roles:
         # Lead mode: one human-approved agent holds Manager + Delegator duties.
         if "manager" in roles or "delegator" in roles:
             raise ValueError("Use agents.lead OR agents.manager + agents.delegator, not both")
@@ -149,7 +164,15 @@ def read_and_validate(config_path, override_run=None):
         for key in ("pane_id", "workspace_id", "worktree"):
             if key in data and not isinstance(data[key], str):
                 raise ValueError(f"{name}.{key} must be a string")
-        if role == "worker":
+        if role == "worker" and execution_mode == "standalone":
+            task = data.get("task", "")
+            if not isinstance(task, str) or not task.strip() or len(task) > 12000 or "\x00" in task:
+                raise ValueError(f"Standalone Worker {name}: task must be non-empty plain text up to 12000 characters")
+            data["_standalone_task"] = task.strip()
+            data["_attempt_id"] = ""
+            data["_task_title"] = "Standalone assignment"
+            data["_task_outcome"] = "Complete the direct human assignment"
+        elif role == "worker":
             tid = data.get("task_id", "")
             if not isinstance(tid, str) or not re.fullmatch(r"T[0-9]{2,4}", tid):
                 raise ValueError(f"Worker {name}: task_id must look like T01")
@@ -176,13 +199,14 @@ def read_and_validate(config_path, override_run=None):
                 raise ValueError(f"Worker {name}: task_title and task_outcome must be provided together")
             data["_task_title"] = title.strip()
             data["_task_outcome"] = outcome.strip()
-        model, effort = resolve_preference(role, data, warnings)
+        model, effort = resolve_preference(role, data, warnings, execution_mode == "standalone")
         data["_resolved_model"] = model
         data["_resolved_effort"] = effort
     if len(roles.get("workers", [])) > budget:
         # Workers may be assigned but not active. Assignment != concurrency.
         pass
     config["run_id"] = run_id
+    config["execution_mode"] = execution_mode
     config["_warnings"] = warnings
     return config, flattened
 
@@ -200,6 +224,18 @@ def prompt_for(run_id, role, agent, run_dir, recipient=None, config=None):
         recipient = "<read-exact-recipient-from-ROLE.md>"
     model = agent.get("_resolved_model", "")
     effort = agent.get("_resolved_effort", "")
+    if role == "worker" and config and config.get("execution_mode") == "standalone":
+        return (f"STANDALONE MODE: You are the single Worker {name}. Activate {skill}. "
+                "The human's direct assignment below is the task contract and execution authorization. "
+                "Do not wait for a Manager/Delegator, ROLE.md, TASK.md, SESSION.md, SQLite, ROLE_READY, or TASK_START. "
+                f"Work only in this assigned existing workspace: {agent.get('_workspace_path') or '<confirm current workspace>'}. "
+                "Inspect the current checkout and relevant diff first. Preserve unrelated dirty changes; if existing edits overlap ambiguously with this task, stop and report the conflict instead of replacing them. "
+                "Use the supplied plan/task over an unrelated stale CONTINUATION_CONTEXT.md; report genuine conflicts among current requirements. "
+                "Do not require Herdr registration or server access unless a requested operation actually needs Herdr; if it does, verify the named agent before acting. "
+                "For an in-scope command blocked only by this CLI's supported approval boundary, request permission through your own native tool and wait for its real decision. Never self-grant, bypass an explicit deny, elevate the OS, change ACLs, or disable sandboxing. "
+                "Make only scoped changes. Run bounded self-checks only when authorized and safe, and label them as self-verification rather than independent verification. Do not spawn agents, publish, or push. "
+                "Finish with a concise report of changed files, checks actually run, limitations, and blockers.\n\n"
+                "Human assignment:\n" + agent["_standalone_task"])
     owner = spawn_owner(role, agent, config) if config else "delegator"
     if role == "worker":
         prompt = (f"ROLE ASSIGNMENT: You are Worker {name} on attempt {agent['_attempt_id']} for run {run_id}, not Manager or Delegator. "
@@ -246,7 +282,9 @@ def prompt_for(run_id, role, agent, run_dir, recipient=None, config=None):
     prompt += (f" SIGNAL RECIPIENT: {recipient}. First verify your Herdr name/pane and recipient; "
                "read the Signal and Receipt Contract plus Access-Denied Preflight when relevant. "
                "Use ROLE_READY once; Herdr prompt submission is NOT delivery/acceptance. "
-               "On Access is denied classify the exact resource, preserve Markdown, NEVER auto-elevate, disable sandbox, or widen ACLs. ")
+               "On access denial verify task authority, role and exact operation, then classify the boundary. "
+               "For the same in-scope action, request native approval through your own harness tool when it is actually offered; wait for its decision and verify the postcondition. "
+               "Never self-grant, route around a deny, NEVER auto-elevate, disable sandbox, widen ACLs, or use another pane to approve. ")
     if role == "delegator":
         prompt += (" OVERRIDE SPAWNER: A Codex Delegator NEVER launches model-overridden Codex CLI workers. "
                    "Instead prepare task worktree/pane and durable SPAWN_REQUEST; request ONLY the Claude Manager launch, "
@@ -296,6 +334,8 @@ def prompt_for(run_id, role, agent, run_dir, recipient=None, config=None):
 
 def signal_recipient(role, config):
     # Roles are assigned to names, not agent kinds; never route to a bare "codex" or "claude".
+    if config.get("execution_mode") == "standalone":
+        return "human (direct standalone assignment)"
     if role == "lead":
         return "the human (not a Herdr agent)"
     return leader(config, "manager" if role == "delegator" else "delegator")["name"]
@@ -304,6 +344,26 @@ def signal_recipient(role, config):
 def render_packet(run_id, role, agent, repo, run_dir, config):
     name, kind = agent["name"], agent["kind"]
     recipient = signal_recipient(role, config)
+    if config.get("execution_mode") == "standalone":
+        return "\n".join([
+            MANAGED,
+            f"# Standalone Worker: {name}",
+            "",
+            "Execution mode: `standalone`",
+            f"CLI kind: `{kind}`",
+            f"Existing workspace: `{agent.get('_workspace_path') or repo}`",
+            "No managed run ledger, role handshake, Manager or Delegator is used.",
+            "The direct human assignment is the authorized task contract.",
+            "",
+            "## Assignment",
+            "",
+            agent["_standalone_task"],
+            "",
+            "## Completion",
+            "",
+            "Report actual changes, checks, limitations, and blockers. Identify self-verification as self-verification; do not claim independent review or human acceptance.",
+            "",
+        ])
     lines = [MANAGED,
              f"# Herdr role: {role.upper()} / {name}", "",
              f"Run: `{run_id}`", f"Agent: `{name}`", f"CLI kind: `{kind}`",
@@ -353,8 +413,8 @@ def render_packet(run_id, role, agent, repo, run_dir, config):
                   "Forbidden: running tests/builds/lint/typecheck/installs, cross-worktree edits, delegation, push.",
                   "Verify effective model/effort before ROLE_READY. If not applied, BLOCKED: MODEL_OVERRIDE_NOT_APPLIED; no TASK_START."]
         if kind == "agy":
-            lines += ["Requested launch flags: `--sandbox --dangerously-skip-permissions` after human-approved trust/sandbox checks.",
-                      "If sandbox blocks edits, report BLOCKED; never remove sandbox to keep permission bypass."]
+            lines += ["Use normal restricted permissions; `--sandbox` may be requested after checking this installed CLI and platform.",
+                      "Never use `--dangerously-skip-permissions` as a recovery path; wait for the native decision or report the blocker."]
     else:
         lines += ["Responsibility: send ROLE_READY, await VERIFY_START + exclusive lock, then run only approved serial checks against fixed integration SHA and send VERIFY_READY.",
                   "A Claude Verifier defaults to Haiku 5.5; treat it as a separately named Herdr tester, not an implementation worker. Verify effective model, pane, integration SHA and delegated command scope before locking.",
@@ -363,7 +423,7 @@ def render_packet(run_id, role, agent, repo, run_dir, config):
               "Keep task_id and attempt_id in Markdown brief/report/signal keys for reconciliation; present the slice title, expected result and evidence-based status to the human. Never use an ID-only progress message. Do not invent a title if it is missing; Delegator must take it from the accepted Manager PLAN before dispatch.",
               "", "## Mandatory signal handshake and access safety", "",
               f"Recipient: `{recipient}`. Transport: `human-direct` (direct console presentation); local Markdown/Git is authoritative." if role == "lead" else f"Recipient: `{recipient}`. Transport: named Herdr `agent prompt`; local Markdown/Git is authoritative.",
-              "If a prompt is denied/missing or local .herdr-loop is unwritable, stop and report the specific blocker; NEVER auto-elevate, disable sandbox, alter OS ACLs or spawn Codex subagents.",
+              "Classify access denials; for an authorized in-scope operation, request permission only through this agent's native tool when offered. The reviewer decides; never self-grant, bypass a deny, disable sandbox, alter ACLs or spawn Codex subagents.",
               "Worker must not edit product code until Delegator observes READY.md + ROLE_READY and sends TASK_START. Verifier needs VERIFY_START plus exclusive verification lock. Critic needs CRITIQUE_START.",
               "", "## Activation prompt", "", prompt_for(run_id, role, agent, run_dir, recipient, config), "",
               "## Handoff rule", "", "Use durable Markdown plus observed Git evidence. Herdr status/prompt is only a wake-up/inspection tool.", ""]
@@ -374,6 +434,18 @@ def render_packet(run_id, role, agent, repo, run_dir, config):
 
 def render_roster(config, flattened, repo, run_dir):
     run_id = config["run_id"]
+    if config.get("execution_mode") == "standalone":
+        agent = flattened[0][1]
+        return "\n".join([
+            MANAGED,
+            f"# Standalone assignment: {run_id}",
+            "",
+            f"Workspace: `{agent.get('_workspace_path') or repo}`",
+            f"Worker: `{agent['name']}` ({agent['kind']})",
+            "Execution mode: standalone; no Manager/Delegator lifecycle or run ledger.",
+            "The generated activation prompt contains the direct human assignment.",
+            "",
+        ])
     lines = [MANAGED, "# Herdr run roster: " + run_id, "",
              f"Repo: `{repo}`", f"Run directory: `{run_dir}`",
              f"Base ref (resolve SHA live): `{config.get('base_ref', '<unset>')}`",
@@ -402,7 +474,7 @@ def render_roster(config, flattened, repo, run_dir):
                if "lead" in config["agents"] else
                f"Signal roles: Manager -> {config['agents']['delegator']['name']}; Delegator -> {config['agents']['manager']['name']}; Workers/Verifier/Critic -> {config['agents']['delegator']['name']}."),
               "Worker must write READY.md and signal ROLE_READY; Delegator logs observed receipt before sending TASK_START. Verifier requires VERIFY_START + serial lock.",
-              "Prompt submission is not proof of receipt; record blockers and do not auto-elevate on access denied.", ""]
+              "Prompt submission is not proof of receipt; request native approval only for the same in-scope action when the active harness offers it, then verify or record a recoverable blocker.", ""]
     if config.get("_warnings"):
         lines += ["## Warnings", ""] + ["- " + w for w in config["_warnings"]] + [""]
     return "\n".join(lines)
@@ -451,7 +523,12 @@ def render_session(config, repo):
             "## Recoverable ownership\n"
             "- Workspaces/panes created by run: NONE OBSERVED\n"
             "- Human-owned workspace/panes NEVER auto-close: inspect and record\n"
-            "- Pending report signals, decisions and blocked states: NONE OBSERVED\n")
+            "- Pending report signals, decisions and blocked states: NONE OBSERVED\n\n"
+            "## Agent prompt submission receipts\n"
+            "Herdr prompt success records submission only. Reconcile the same target and task before replaying.\n\n"
+            "<!-- HERDR_ACTIVATION_RECEIPTS_START -->\n"
+            "```json\n[]\n```\n"
+            "<!-- HERDR_ACTIVATION_RECEIPTS_END -->\n")
 
 
 def generated_content(path, new_contents, force, dry_run):
@@ -494,10 +571,31 @@ def main(argv=None):
         run_dir = repo / ".herdr-loop" / config["run_id"]
         if run_dir.is_symlink():
             raise RuntimeError("Refusing symlink run directory")
-        if (run_dir / "ledger.sqlite").exists():
-            raise RuntimeError("Refusing Markdown role bind over a SQLite ledger run")
+        standalone = config["execution_mode"] == "standalone"
+        fresh = not run_dir.exists()
+        if standalone:
+            if not fresh:
+                activation_path = run_dir / "ACTIVATION.json"
+                if (run_dir / "SESSION.md").exists() or (run_dir / "ledger.sqlite").exists() or (run_dir / "BACKEND.json").exists():
+                    raise RuntimeError("Cannot bind standalone mode over a governed run or ledger")
+                if activation_path.is_symlink() or not activation_path.is_file():
+                    raise RuntimeError("Existing run directory is not a standalone role-pack binding")
+                old_activation = json.loads(activation_path.read_text(encoding="utf-8"))
+                if old_activation.get("generated_by") != "herdr-role-pack" or old_activation.get("execution_mode") != "standalone":
+                    raise RuntimeError("Cannot switch an existing governed or unmanaged run to standalone mode")
+            for _, agent in agents:
+                assigned = agent.get("worktree")
+                workspace = Path(assigned).expanduser().resolve(strict=True) if assigned else repo
+                if not workspace.is_dir():
+                    raise ValueError("Standalone Worker workspace must be an existing directory")
+                agent["_workspace_path"] = str(workspace)
+        else:
+            if (run_dir / "ledger.sqlite").exists():
+                raise RuntimeError("Refusing Markdown role bind over a SQLite ledger run")
+
         files = {run_dir / "ROSTER.md": render_roster(config, agents, repo, run_dir)}
-        activation = {"run_id": config["run_id"], "repo": str(repo), "agents": []}
+        activation = {"run_id": config["run_id"], "repo": str(repo),
+                      "execution_mode": config["execution_mode"], "agents": []}
         for role, agent in agents:
             recipient = signal_recipient(role, config)
             packet = run_dir / "role-packets" / (agent["name"] + ".md")
@@ -505,24 +603,32 @@ def main(argv=None):
             activation["agents"].append({"name": agent["name"], "kind": agent["kind"], "role": role,
                 "task_id": agent.get("task_id", ""), "attempt_id": agent.get("_attempt_id", ""), "worktree": agent.get("worktree", ""),
                 "task_title": agent.get("_task_title", ""), "task_outcome": agent.get("_task_outcome", ""),
-                "signal_recipient": recipient, "signal_transport": "human-direct" if role == "lead" else "herdr-agent-prompt",
+                "task_contract": agent.get("_standalone_task", ""),
+                "workspace_path": agent.get("_workspace_path", ""),
+                "signal_recipient": recipient,
+                "signal_transport": "manual-direct" if standalone else ("human-direct" if role == "lead" else "herdr-agent-prompt"),
                 "model": agent.get("_resolved_model", ""), "reasoning_effort": agent.get("_resolved_effort", ""),
-                "spawn_owner": spawn_owner(role, agent, config),
-                "requires_role_ready": True,
+                "spawn_owner": "none" if standalone else spawn_owner(role, agent, config),
+                "requires_role_ready": not standalone,
                 "prompt": prompt_for(config["run_id"], role, agent, run_dir, recipient, config), "packet": str(packet)})
-        intro = [MANAGED, "# Herdr activation prompts: " + config["run_id"], "",
-                 "The installer makes skills discoverable. The roster below **assigns** roles. Neither step starts an agent.",
-                 "To activate live agents: open the relevant Herdr panes, confirm their names, then paste each prompt",
-                 "through Herdr's `agent prompt` command, or use `tools/activate_roles.py` inside Herdr.",
-                 "Do not dispatch Workers until Delegator copies ROLE.md and TASK.md into their worktree.",
-                 "For user-facing progress, replace Txx/attempt IDs with approved slice titles and outcomes from SESSION.md. Do not invent descriptions or acceptance.",
-                 "This is a setup-only activation. Workers: READY.md + ROLE_READY + actual model/effort to Delegator, then WAIT for TASK_START; dedicated Haiku tester uses the Verifier role and waits for VERIFY_START + lock; Critic waits for CRITIQUE_START.",
-                 "Codex Delegator: NEVER launch model-overridden Codex CLI; obtain a SPAWN_READY receipt from Claude Manager or human/non-Codex operator first.",
-                 "If Herdr prompt/socket/file access is denied, report a typed environment blocker; do not elevate or disable sandbox.", ""]
+        if standalone:
+            intro = [MANAGED, "# Standalone Worker assignment: " + config["run_id"], "",
+                     "This is one direct human assignment. It does not create a governed run, ledger, Manager/Delegator team, or handshake.",
+                     "No agent is started by this file. Paste the prompt below into the already-running assigned CLI/Herdr Worker.",
+                     "If a Herdr prompt is used, do not replay after timeout until the same recipient and task artifact have been reconciled.", ""]
+        else:
+            intro = [MANAGED, "# Herdr activation prompts: " + config["run_id"], "",
+                     "The installer makes skills discoverable. The roster below **assigns** roles. Neither step starts an agent.",
+                     "To activate live agents: open the relevant Herdr panes, confirm their names, then paste each prompt",
+                     "through Herdr's `agent prompt` command, or use `tools/activate_roles.py` inside Herdr.",
+                     "Do not dispatch Workers until Delegator copies ROLE.md and TASK.md into their worktree.",
+                     "For user-facing progress, replace Txx/attempt IDs with approved slice titles and outcomes from SESSION.md. Do not invent descriptions or acceptance.",
+                     "This is a setup-only activation. Workers: READY.md + ROLE_READY + actual model/effort to Delegator, then WAIT for TASK_START; dedicated Haiku tester uses the Verifier role and waits for VERIFY_START + lock; Critic waits for CRITIQUE_START.",
+                     "Codex Delegator: NEVER launch model-overridden Codex CLI; obtain a SPAWN_READY receipt from Claude Manager or human/non-Codex operator first.",
+                     "If Herdr prompt/socket/file access is denied, classify the boundary. Request native approval only through this agent's supported tool for the same in-scope action; never grant, bypass, or disable sandbox.", ""]
         for entry in activation["agents"]:
             intro += [f"## {entry['name']} ({entry['kind']}, {entry['role']})", "", entry["prompt"], ""]
         files[run_dir / "ACTIVATE.md"] = "\n".join(intro)
-        # We intentionally leave SESSION.md as a human/agent-owned mutable ledger after initialization.
         # JSON contains no marker; only overwrite it when force is explicit and prior JSON has pack provenance.
         activation["generated_by"] = "herdr-role-pack"
         json_path = run_dir / "ACTIVATION.json"
@@ -537,6 +643,25 @@ def main(argv=None):
             if path.exists() and path.read_text(encoding="utf-8") != content:
                 if not args.force or not path.read_text(encoding="utf-8").startswith(MANAGED):
                     raise RuntimeError("Refusing changed/unmanaged output: " + str(path) + " (use --force for generated files)")
+        if standalone and fresh and not args.dry_run:
+            stage = run_dir.with_name("." + run_dir.name + ".bind-" + str(os.getpid()))
+            if stage.exists():
+                raise RuntimeError("STANDALONE_BIND_BLOCKED: bootstrap staging directory already exists: " + str(stage))
+            stage.parent.mkdir(parents=True, exist_ok=True)
+            stage.mkdir()
+            try:
+                for path, content in files.items():
+                    staged = stage / path.relative_to(run_dir)
+                    staged.parent.mkdir(parents=True, exist_ok=True)
+                    staged.write_text(content, encoding="utf-8")
+                (stage / "ACTIVATION.json").write_text(new_json, encoding="utf-8")
+                os.replace(stage, run_dir)
+            except Exception:
+                raise RuntimeError("BOOTSTRAP_INCOMPLETE: inspect staging directory before retrying: " + str(stage))
+            print("WROTE", run_dir, "mode=standalone")
+            if standalone:
+                print("NOTE: standalone output has no SESSION.md, SQLite ledger, or managed role handshake; no agent was started.")
+            return 0
         for path, content in files.items():
             status = generated_content(path, content, args.force, args.dry_run)
             print(status.upper(), path)
@@ -544,13 +669,17 @@ def main(argv=None):
             json_path.parent.mkdir(parents=True, exist_ok=True)
             json_path.write_text(new_json, encoding="utf-8")
         print(("WOULD WRITE" if args.dry_run else "WROTE"), json_path)
-        session = run_dir / "SESSION.md"
-        if not session.exists():
-            if not args.dry_run:
-                session.write_text(render_session(config, repo), encoding="utf-8")
-            print(("WOULD WRITE" if args.dry_run else "WROTE"), session)
+
+        if standalone:
+            print("NOTE: standalone output has no SESSION.md, SQLite ledger, or managed role handshake; no agent was started.")
         else:
-            print("PRESERVED", session, "(live ledger never overwritten)")
+            session = run_dir / "SESSION.md"
+            if not session.exists():
+                if not args.dry_run:
+                    session.write_text(render_session(config, repo), encoding="utf-8")
+                print(("WOULD WRITE" if args.dry_run else "WROTE"), session)
+            else:
+                print("PRESERVED", session, "(live ledger never overwritten)")
         print("NOTE: .herdr-loop files are local runtime context; exclude them from Git commits.")
         return 0
     except (ValueError, OSError, RuntimeError, json.JSONDecodeError) as exc:

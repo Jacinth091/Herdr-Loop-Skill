@@ -1,31 +1,46 @@
-# Access-Denied Preflight and Escalation
+# Permission and access recovery
 
-`Access is denied`, `EPERM`, `EACCES`, `WinError 5`, and `permission denied` are **symptoms, not instructions to elevate**. Distinguish a wrong pane/session, sandbox policy, file ACL, Herdr socket failure, and protected external services before selecting the smallest next step. Do not auto-run as Administrator, disable the sandbox, change ACLs/owner recursively, weaken PowerShell/system policy, expose a Docker TCP endpoint, copy credentials or retry indefinitely.
+An access error is evidence to classify, not permission to broaden. First confirm the active mode, direct user/task authority, role, exact operation, target path and whether the operation actually requires Herdr. A standalone local task does not require `HERDR_ENV=1` or a working Herdr server. A Herdr operation requires the correct registered agent/pane and target.
 
-## Preflight before starting agents or executing an assigned task
+## Decision order
 
-1. **Origin:** In the assigned pane, check `HERDR_ENV=1`, `herdr --version`, `herdr status server`, `herdr agent get <assigned-name>`. Compare observed Herdr pane/workspace/cwd with the role packet and `SESSION.md`. A `HERDR_ENV` variable by itself does not prove agent registration. Run `herdr agent list` or pane inspection only when needed.
-2. **Code provenance:** Confirm worktree path, branch, fixed base and clean/unrelated changes with `git rev-parse`, `git branch --show-current`, `git status --short`, `git worktree list --porcelain` (for code roles). Do not run in an arbitrary current directory.
-3. **Narrow filesystem check:** Worker should be able to create/remove a harmless temporary file **only inside its own** `.herdr-loop/`, not the full repo or another worktree. A successful probe proves only that particular path is writable. No secrets or full environment dumps in diagnostics.
-4. **Signal path:** Resolve the exact recipient from the local role packet, check `herdr agent get <recipient>`, and perform the `ROLE_READY` handshake. An agent whose recipient is missing or whose own pane is not registered does not start implementation.
-5. **Verification services:** Only an authorized Delegator/Verifier checks Docker/WSL/database access and only when needed for approved tests. Confirm disposable DB identity and serial test lock first. A Windows `npipe` failure is distinct from source-code test failure.
+1. Refuse operations outside the task, assigned workspace, role or explicit grant. A native tool approval cannot expand any of these boundaries.
+2. Identify the failing boundary: CLI executable, provider sandbox/tool policy, Herdr server/IPC, assigned workspace, OS ACL/process token, or an external service. Use one bounded read-only probe when it can distinguish the cause.
+3. For the same authorized in-scope command blocked only by the active harness's supported approval boundary, request approval through that AI's own execution tool. The tool's reviewer/user grants or denies it; this skill and Herdr cannot approve it. Continue only after the real decision and verify the postcondition.
+4. Treat explicit deny as terminal for that operation. Unsupported or unknown approval capability is not a denial and is not permission; preserve the task and report the single actionable blocker.
+5. Before repeating a command that may have created a workspace, agent, prompt, worktree, commit, test, or cleanup effect, reconcile the same target read-only. If the result remains ambiguous, preserve resources and stop.
 
-## Classify, report, and route
+Never request OS Administrator/root access as a routine fix, change ACLs/security settings, disable sandboxing, edit provider policy, switch shells/providers to bypass a deny, press approval keys in another pane, or spawn an unapproved agent.
 
-| Observation | Likely class | Required response |
+## Probe facts and classifications
+
+`tools/access_probe.py` is diagnostic only. It reports platform, optional explicitly supplied CLI kind/version, Herdr origin/server/agent/pane evidence, workspace scratch-write result, and typed blockers. `approval_capability: unverified` means this probe cannot observe the active harness tool or its current approval flow. A successful scratch write proves only that path is writable. The probe never requests or grants command approval.
+
+| Evidence | Classification | Next action |
 | --- | --- | --- |
-| `HERDR_ENV` missing, wrong pane, or `herdr agent get` cannot confirm role | `HERDR_ORIGIN_UNCONFIRMED` | Stop; inspect actual Herdr workspace and use a valid Herdr-spawned agent, never Codex `spawn_agent` |
-| Herdr CLI cannot reach running server/socket or reports denied | `HERDR_TRANSPORT_DENIED` | Record exact command, server/session and redacted error; ask Delegator/human to repair socket/session context |
-| Assigned `.herdr-loop` or worktree write probe denied | `WORKTREE_WRITE_DENIED` | Confirm actual cwd, permitted root and ownership; no blind elevation or sandbox disabling; Delegator chooses authorized reprovisioning |
-| CLI permits read-only operations but worker edits blocked by its sandbox | `AGENT_SANDBOX_DENIED` | Preserve isolation; escalate for human review or choose a pre-approved narrower writable worktree |
-| Docker CLI works outside agent but `npipe:////./pipe/docker_engine` denied inside | `DOCKER_PIPE_DENIED` | Treat as verification **environment** block; human may approve a separate trusted verifier/pane, no daemon/ACL reconfiguration by agent |
-| WSL launch errors `E_ACCESSDENIED` from agent | `WSL_ACCESS_DENIED` | Distinguish sandbox/process restrictions from product failure; do not mutate WSL policy |
-| Named destination absent, ambiguous, or prompt denied | `SIGNAL_TRANSPORT_UNAVAILABLE` | Keep Markdown, report missing recipient/route, no fabricated delivery; retry only after observed repair |
-| OS-denied specific file outside assigned root | `OUT_OF_SCOPE_ACCESS_DENIED` | Do not seek access; task needs a narrower brief or authorized handoff |
-| Cause unknown | `ACCESS_DENIED_UNCLASSIFIED` | Stop at the smallest failing step and escalate with redacted evidence |
+| `HERDR_ENV` missing, pane mismatch, or named agent absent | `HERDR_ORIGIN_UNCONFIRMED` | Repair/confirm the actual Herdr assignment only if the requested operation needs Herdr. |
+| Herdr executable missing | `HERDR_CLI_UNAVAILABLE` | Do not attempt Herdr control; standalone local work may continue if it does not need Herdr. |
+| Server/socket/named pipe unreachable | `HERDR_TRANSPORT_DENIED` | Capture the exact boundary and sanitized error. Use native command approval only if the denial is demonstrably the harness boundary; otherwise preserve state for operator repair. |
+| Current harness blocks an in-scope command and offers its own approval | `AGENT_SANDBOX_DENIED` / `APPROVAL_NEEDED` | Request the exact command using that harness tool and wait for its actual decision. |
+| Provider/user rejects the request or an explicit deny rule matches | `DENIED` | Stop that operation. No retry or equivalent command through another route. |
+| No visible approval tool, noninteractive mode, or capability not verified | `APPROVAL_UNAVAILABLE` / `UNVERIFIED` | Keep the task and give one user-owned next step; do not claim universal provider support. |
+| OS ACL, process token, or WinError 5 denial | `OS_ACCESS_DENIED` | Do not seek admin or edit ACLs. Report the target and user-owned repair needed. |
+| Prompt/command timed out after possible submission | `OUTCOME_UNCERTAIN` | Inspect same Herdr agent/pane plus correlated task artifact or Git postcondition; idle/status alone is not proof. |
+| Cause cannot be isolated | `ACCESS_DENIED_UNCLASSIFIED` | Stop at the smallest failed operation and preserve the task. |
+| Target is outside the task or role | `OUT_OF_SCOPE` | Do not request permission for it. Obtain a separate scope decision. |
 
-## Blocker evidence minimum
+Example diagnostic (supply identity only when actually observed):
 
-Save to worker-local `REPORT.md`, verification report, or Delegator's `SESSION.md`: `run/task/role`, **actual** Herdr name and pane (if observed), cwd/worktree, CLI executable/version (if relevant), exact failing command **without secret args**, protected target category, exit code and short redacted error, whether the same operation is allowed from an ordinary human-owned shell (if human confirms), last successful read-only check, and proposed smallest approval/reprovisioning action. Distinguish `ENV_BLOCKED` from `PRODUCT_FAIL`.
+```sh
+python tools/access_probe.py --workspace <assigned-workspace> --agent <herdr-name> --pane <pane-id> --harness-kind codex
+```
 
-If no file is writable, leave the error plainly in the agent pane and inform the human/Delegator through any already-authorized channel. Do not pretend a report file or signal exists. A bounded single recheck is acceptable after the environment changes; no speculative retries or permission expansion.
+`--probe-write` creates and removes one temporary file inside `<workspace>/.herdr-loop`. `--skip-herdr` is filesystem-only troubleshooting and always leaves Herdr origin unconfirmed.
+
+## Retry receipts
+
+For governed Markdown runs, store one stable operation receipt in the existing `SESSION.md` `Agent prompt submission receipts` section. The binder/activator records a SHA-256-derived `operation_id`, target, task/attempt, status and short evidence; it never stores the prompt or raw output. `SUBMITTING` or `SUBMITTED` is not proof of delivery. On a later activation, the tool blocks replay until the Delegator/Lead records a read-only reconciliation as `CONFIRMED_APPLIED`, `CONFIRMED_NOT_APPLIED`, `DENIED`, or `OUTCOME_UNCERTAIN` with evidence. Only one retry is allowed after `CONFIRMED_NOT_APPLIED`.
+
+For standalone work without a run ledger, keep recovery evidence with the task/report or final response; do not create a new permission database or state file. On ambiguous delivery, inspect the same recipient and task artifact before resending.
+
+Never record secrets, raw prompts, full environment dumps, credential-bearing arguments, or unredacted transcripts. Do not infer `ROLE_READY`, `TASK_START`, test success, independent verification, or human acceptance from a command exit code.
