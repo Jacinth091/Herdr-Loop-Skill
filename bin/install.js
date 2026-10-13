@@ -230,35 +230,91 @@ function main() {
   const selectedAgents = resolveAgents(options.agents, agentDirs);
   const selectedRoles = resolveRoles(options.roles);
 
+  // Preflight check: validate sources and check for unmanaged destination collisions
+  const plan = [];
   for (const agent of selectedAgents) {
     const baseDir = agentDirs[agent];
     for (const skillName of selectedRoles) {
       const source = path.join(ROOT, 'skills', skillName);
-      installSkill({ source, baseDir, skillName, options });
+      const target = path.join(baseDir, skillName);
+      const marker = path.join(target, '.herdr-role-pack-managed');
+      const exists = fs.existsSync(target);
+      const managed = fs.existsSync(marker);
+
+      if (!options.uninstall) {
+        if (!fs.existsSync(path.join(source, 'SKILL.md'))) {
+          console.error(`Error: Missing source SKILL.md in: ${source}`);
+          process.exit(1);
+        }
+        if (exists && !managed) {
+          console.error(`Error: REFUSE unmanaged existing directory: ${target}`);
+          process.exit(1);
+        }
+      }
+      plan.push({ agent, baseDir, skillName, source, target, exists, managed });
+    }
+  }
+
+  // Pre-install backup for multi-skill rollback on failure
+  let backupDir = null;
+  if (!options.dryRun && !options.uninstall) {
+    const backupRoot = path.join(os.homedir(), '.herdr-backups');
+    backupDir = path.join(backupRoot, `install-backup-${Date.now()}`);
+    for (const item of plan) {
+      if (item.exists && item.managed) {
+        const itemBackup = path.join(backupDir, item.agent, item.skillName);
+        fs.mkdirSync(path.dirname(itemBackup), { recursive: true });
+        copyDirRecursive(item.target, itemBackup);
+      }
+    }
+  }
+
+  try {
+    for (const item of plan) {
+      installSkill({ source: item.source, baseDir: item.baseDir, skillName: item.skillName, options });
     }
 
     if (options.withHerdr) {
-      const targetHerdr = path.join(baseDir, 'herdr');
-      if (options.uninstall) {
-        installSkill({ source: path.join(ROOT, 'skills', 'herdr'), baseDir, skillName: 'herdr', options });
-      } else if (options.dryRun) {
-        console.log(`INSTALL official herdr skill from 'herdr --skill' -> ${targetHerdr}`);
-      } else {
-        try {
-          const herdrOutput = execFileSync('herdr', ['--skill'], { encoding: 'utf8', timeout: 5000 });
-          if (herdrOutput && herdrOutput.startsWith('---')) {
-            const tempDir = path.join(os.tmpdir(), `herdr-official-${Date.now()}`);
-            const tempSkillDir = path.join(tempDir, 'herdr');
-            fs.mkdirSync(tempSkillDir, { recursive: true });
-            fs.writeFileSync(path.join(tempSkillDir, 'SKILL.md'), herdrOutput);
-            installSkill({ source: tempSkillDir, baseDir, skillName: 'herdr', options });
-            fs.rmSync(tempDir, { recursive: true, force: true });
+      for (const agent of selectedAgents) {
+        const baseDir = agentDirs[agent];
+        const targetHerdr = path.join(baseDir, 'herdr');
+        if (options.uninstall) {
+          installSkill({ source: path.join(ROOT, 'skills', 'herdr'), baseDir, skillName: 'herdr', options });
+        } else if (options.dryRun) {
+          console.log(`INSTALL official herdr skill from 'herdr --skill' -> ${targetHerdr}`);
+        } else {
+          try {
+            const herdrOutput = execFileSync('herdr', ['--skill'], { encoding: 'utf8', timeout: 5000 });
+            if (herdrOutput && herdrOutput.startsWith('---')) {
+              const tempDir = path.join(os.tmpdir(), `herdr-official-${Date.now()}`);
+              const tempSkillDir = path.join(tempDir, 'herdr');
+              fs.mkdirSync(tempSkillDir, { recursive: true });
+              fs.writeFileSync(path.join(tempSkillDir, 'SKILL.md'), herdrOutput);
+              installSkill({ source: tempSkillDir, baseDir, skillName: 'herdr', options });
+              fs.rmSync(tempDir, { recursive: true, force: true });
+            }
+          } catch {
+            console.log(`SKIP official herdr skill: 'herdr --skill' unavailable`);
           }
-        } catch {
-          console.log(`SKIP official herdr skill: 'herdr --skill' unavailable`);
         }
       }
     }
+  } catch (err) {
+    console.error(`ERROR during installation: ${err.message}`);
+    if (backupDir && fs.existsSync(backupDir)) {
+      console.error(`Rolling back to previous installation from ${backupDir}...`);
+      for (const item of plan) {
+        const itemBackup = path.join(backupDir, item.agent, item.skillName);
+        if (fs.existsSync(itemBackup)) {
+          if (fs.existsSync(item.target)) {
+            fs.rmSync(item.target, { recursive: true, force: true });
+          }
+          copyDirRecursive(itemBackup, item.target);
+        }
+      }
+      console.error('Rollback completed.');
+    }
+    process.exit(1);
   }
 
   console.log(`Done. Bind session roles with 'tools/role_bind.py' or make role assignments manually from examples/roles.example.json.`);

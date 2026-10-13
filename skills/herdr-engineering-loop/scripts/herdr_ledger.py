@@ -593,7 +593,7 @@ def operation(root, args):
                     fail("Codex worker must declare expected model and xhigh/max effort")
                 run=guarded(conn,root)
                 if not ready(conn,args.task):fail("task not ready")
-                running=one(conn,"SELECT COUNT(*) AS n FROM attempt WHERE kind='worker' AND state IN ('RESERVED','OBSERVED','READY','STARTED','UNCERTAIN','BLOCKED')")["n"]
+                running=one(conn,"SELECT COUNT(*) AS n FROM attempt WHERE state IN ('RESERVED','OBSERVED','READY','STARTED','UNCERTAIN','BLOCKED')")["n"]
                 if running >= run["max_workers"]:fail("worker budget full")
                 if one(conn,"SELECT id FROM attempt WHERE task_id=? AND state IN ('RESERVED','OBSERVED','READY','STARTED','UNCERTAIN','BLOCKED')",(args.task,)):
                     fail("task already has a live worker attempt")
@@ -826,6 +826,24 @@ def operation(root, args):
                 return f"OK verification={args.verification} state=INDETERMINATE"
             return action(conn,root,name,request,data,act,
                           allowed_states=("EXECUTING","CANCELLING","CANCELLATION_BLOCKED"),check_plan=False)
+        if name == "verify-reconcile":
+            data=dict(verification=args.verification,reason=args.reason)
+            def act():
+                v=get(conn,"verification",args.verification)
+                if v["state"] not in ("RUNNING","UNCERTAIN"):
+                    fail(f"only running or uncertain verification can be reconciled; current state is {v['state']}")
+                c=get(conn,"candidate",v["candidate_id"])
+                output=root / "verifications" / (args.verification+".log")
+                if not output.exists():
+                    output.write_bytes(f"--- verification reconciled: {args.reason} ---\n".encode("utf-8"))
+                rel,digest=relative_evidence(root,output.relative_to(root).as_posix())
+                release(conn,c["checkout"],args.verification,v["claim_generation"])
+                release(conn,"heavy-local-verification",args.verification,v["heavy_generation"])
+                conn.execute("UPDATE verification SET state='INDETERMINATE',exit_code=NULL,evidence_path=?,evidence_sha=? WHERE id=?",
+                             (rel,digest,args.verification))
+                return f"OK verification={args.verification} state=INDETERMINATE reconciled=true claims-released"
+            return action(conn,root,name,request,data,act,
+                          allowed_states=("EXECUTING","CANCELLING","CANCELLATION_BLOCKED"),check_plan=False)
         if name == "task-accept":
             data=dict(task=args.task,candidate=args.candidate,decision=args.decision_id)
             with closing(connect(root,True)) as read:
@@ -919,6 +937,7 @@ def parser():
     add("verify-exec",verification=dict(required=True),timeout=dict(type=int,default=300),request_id=dict(required=True)).add_argument("argv",nargs=argparse.REMAINDER)
     add("verify-record",verification=dict(required=True),result=dict(choices=["PASS","FAIL","INDETERMINATE"],required=True),exit_code=dict(type=int,required=True),evidence=dict(required=True),request_id=dict(required=True))
     add("verify-abort",verification=dict(required=True),reason=dict(required=True),request_id=dict(required=True))
+    add("verify-reconcile",verification=dict(required=True),reason=dict(required=True),request_id=dict(required=True))
     add("task-accept",task=dict(required=True),candidate=dict(required=True),decision_id=dict(required=True),request_id=dict(required=True))
     return p
 

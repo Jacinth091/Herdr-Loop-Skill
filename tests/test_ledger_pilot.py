@@ -262,6 +262,12 @@ class LedgerPilotTests(unittest.TestCase):
         with closing(sqlite3.connect(self.run_dir/'ledger.sqlite')) as db:
             self.assertEqual('RUNNING',db.execute("SELECT state FROM verification WHERE id='V01'").fetchone()[0])
             self.assertEqual(1,db.execute("SELECT active FROM claim WHERE resource='heavy-local-verification'").fetchone()[0])
+        recon = self.cmd('verify-reconcile', '--verification', 'V01', '--reason', 'process confirmed dead', '--request-id', 'reconcile1')
+        self.assertIn('reconciled=true', recon)
+        self.assertIn('claims-released', recon)
+        with closing(sqlite3.connect(self.run_dir/'ledger.sqlite')) as db:
+            self.assertEqual('INDETERMINATE',db.execute("SELECT state FROM verification WHERE id='V01'").fetchone()[0])
+            self.assertEqual(0,db.execute("SELECT active FROM claim WHERE resource='heavy-local-verification'").fetchone()[0])
 
     def test_unauthorized_evidence_path_rejected(self):
         self.init(); self.task()
@@ -465,6 +471,24 @@ class LedgerPilotTests(unittest.TestCase):
         self.assertIn('non-authoritative',exported)
         self.assertIn('Plan SHA-256',exported)
         self.assertFalse((self.run_dir/'SESSION.md').exists())
+
+    def test_independent_checkouts_budget_enforced(self):
+        self.init()
+        self.task()
+        # Add a second task
+        (self.run_dir / 'TASK2.md').write_text('# Task 2\nSafe outcome\n', encoding='utf-8')
+        self.cmd('task-add', '--task', 'T02', '--title', 'Second Task', '--outcome', 'Second outcome',
+                 '--brief', 'TASK2.md', '--request-id', 'task2')
+        # Create a second independent worktree
+        worker2 = self.root / 'worker2'
+        shell('git', '-C', str(self.repo), 'worktree', 'add', '-b', 'worker2-branch', str(worker2), 'HEAD')
+
+        # First worker reservation succeeds
+        self.reserve('T01', 'T01-A1', checkout=self.worker)
+
+        # Second worker reservation on a distinct checkout must fail when max_workers=1
+        err = self.reserve('T02', 'T02-A1', checkout=worker2, request='reserve2', ok=False)
+        self.assertIn('worker budget full', err)
 
 
 if __name__ == '__main__':

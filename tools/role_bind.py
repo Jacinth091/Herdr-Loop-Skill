@@ -81,6 +81,11 @@ def read_and_validate(config_path, override_run=None):
     verify = config.get("verification_concurrency", 1)
     if verify != 1 or isinstance(verify, bool):
         raise ValueError("verification_concurrency must be 1 for serial verification")
+    backend = config.get("state_backend", "markdown")
+    if not isinstance(backend, str) or backend not in ("markdown", "sqlite"):
+        raise ValueError(f"Invalid state_backend: {repr(backend)}. Must be 'markdown' or 'sqlite'.")
+    if backend == "sqlite":
+        raise ValueError("SQLITE_BACKEND_NOT_LIVE: The SQLite state backend is currently an offline pilot only. Use scripts/herdr_ledger.py for isolated pilot runs; do not activate a live run. Routine role binding requires 'markdown' (SESSION.md).")
     roles = config.get("agents")
     if not isinstance(roles, dict):
         raise ValueError("agents must be an object")
@@ -423,16 +428,11 @@ def main(argv=None):
         if not repo.is_dir():
             raise ValueError("--repo must refer to an existing directory")
         config, agents = read_and_validate(args.config, args.run_id)
-        is_sqlite = config.get("state_backend") == "sqlite"
         run_dir = repo / ".herdr-loop" / config["run_id"]
         if run_dir.is_symlink():
             raise RuntimeError("Refusing symlink run directory")
-        if is_sqlite:
-            if (run_dir / "SESSION.md").exists():
-                raise RuntimeError("Refusing SQLite role bind over an existing SESSION.md run")
-        else:
-            if (run_dir / "ledger.sqlite").exists():
-                raise RuntimeError("Refusing Markdown role bind over a SQLite ledger run")
+        if (run_dir / "ledger.sqlite").exists():
+            raise RuntimeError("Refusing Markdown role bind over a SQLite ledger run")
         files = {run_dir / "ROSTER.md": render_roster(config, agents, repo, run_dir)}
         activation = {"run_id": config["run_id"], "repo": str(repo), "agents": []}
         for role, agent in agents:
@@ -481,16 +481,13 @@ def main(argv=None):
             json_path.parent.mkdir(parents=True, exist_ok=True)
             json_path.write_text(new_json, encoding="utf-8")
         print(("WOULD WRITE" if args.dry_run else "WROTE"), json_path)
-        if not is_sqlite:
-            session = run_dir / "SESSION.md"
-            if not session.exists():
-                if not args.dry_run:
-                    session.write_text(render_session(config, repo), encoding="utf-8")
-                print(("WOULD WRITE" if args.dry_run else "WROTE"), session)
-            else:
-                print("PRESERVED", session, "(live ledger never overwritten)")
+        session = run_dir / "SESSION.md"
+        if not session.exists():
+            if not args.dry_run:
+                session.write_text(render_session(config, repo), encoding="utf-8")
+            print(("WOULD WRITE" if args.dry_run else "WROTE"), session)
         else:
-            print("SQLITE-MODE", run_dir, "(SESSION.md suppressed; orchestration state in ledger.sqlite)")
+            print("PRESERVED", session, "(live ledger never overwritten)")
         print("NOTE: .herdr-loop files are local runtime context; exclude them from Git commits.")
         return 0
     except (ValueError, OSError, RuntimeError, json.JSONDecodeError) as exc:

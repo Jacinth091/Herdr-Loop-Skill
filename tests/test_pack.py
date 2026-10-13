@@ -52,20 +52,19 @@ class RolePackTests(unittest.TestCase):
         self.assertIn("SQLite ledger run",result.stderr)
         self.assertFalse((run / "SESSION.md").exists())
 
-    def test_bind_sqlite_mode_suppresses_session_md_and_refuses_existing_session_md(self):
-        run = self.repo / ".herdr-loop" / self.config["run_id"]
+    def test_bind_sqlite_mode_fails_closed_as_offline_pilot(self):
         self.config["state_backend"] = "sqlite"
         self.save()
         result = self.bind()
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertFalse((run / "SESSION.md").exists())
-        self.assertTrue((run / "ACTIVATION.json").exists())
-        self.assertTrue((run / "ACTIVATE.md").exists())
-        # Refuses when SESSION.md exists
-        (run / "SESSION.md").write_text("existing markdown authority\n", encoding="utf8")
-        result_blocked = self.bind("--force")
-        self.assertNotEqual(result_blocked.returncode, 0)
-        self.assertIn("existing SESSION.md run", result_blocked.stderr)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("SQLITE_BACKEND_NOT_LIVE", result.stderr)
+
+    def test_bind_invalid_state_backend_fails(self):
+        self.config["state_backend"] = "unknown_backend"
+        self.save()
+        result = self.bind()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Invalid state_backend", result.stderr)
 
     def test_bundle_roles_exist(self):
         for skill in ("herdr-engineering-loop", "herdr-manager", "herdr-delegator", "herdr-worker", "herdr-verifier", "herdr-critic"):

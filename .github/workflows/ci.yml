@@ -1,0 +1,54 @@
+name: Skill Validation & CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test & Validate (${{ matrix.os }})
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run Unit Test Suite
+        run: |
+          python -m unittest tests/test_ledger_pilot.py tests/test_pack.py tests/test_progress_view.py tests/test_package_and_update.py
+
+      - name: Validate Cross-Platform Node Installer Dry-Run
+        run: |
+          node bin/install.js --dry-run
+
+      - name: Validate Windows PowerShell Installer Dry-Run
+        if: runner.os == 'Windows'
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -DryRun
+
+      - name: Validate POSIX Shell Installer Dry-Run
+        if: runner.os == 'Linux'
+        run: |
+          sh ./install.sh --dry-run
+
+      - name: Test Deterministic Packaging & Archive Validation
+        run: |
+          python tools/package.py --output-dir dist/ci-test

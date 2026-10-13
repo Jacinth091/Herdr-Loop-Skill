@@ -1,0 +1,79 @@
+name: Publish Skill Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate Tagged Source
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out tagged commit
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Verify Tag Matches Manifest Version
+        id: check-version
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#v}"
+          echo "Tagged release version: $VERSION"
+          python -c "
+          import json, sys
+          data = json.load(open('manifest.json'))
+          manifest_ver = data.get('version')
+          if manifest_ver != '$VERSION':
+              sys.exit(f'Tag version mismatch: tag is $VERSION but manifest.json is {manifest_ver}')
+          "
+
+      - name: Run Test Suite
+        run: |
+          python -m unittest tests/test_ledger_pilot.py tests/test_pack.py tests/test_progress_view.py tests/test_package_and_update.py
+
+      - name: Test Installer Dry-Runs
+        run: |
+          sh ./install.sh --dry-run
+          node bin/install.js --dry-run
+
+  publish:
+    name: Build & Publish GitHub Release
+    needs: [validate]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out tagged commit
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build Verified Release Archives & Checksums
+        run: |
+          python tools/package.py --output-dir dist
+
+      - name: Create GitHub Release with Verified Assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          gh release create "$TAG" dist/* \
+            --title "Herdr Role Pack $TAG" \
+            --generate-notes \
+            --verify-tag
