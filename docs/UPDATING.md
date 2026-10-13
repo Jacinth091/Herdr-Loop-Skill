@@ -85,7 +85,10 @@ python tools/update.py --rollback ~/.herdr-backups/backup-20261013-120000
 To remove pack-managed skills without deleting your project data, sessions, or custom skills:
 
 ```bash
-# Cross-platform:
+# Cross-platform, no clone needed:
+npx github:Jacinth091/Herdr-Loop-Skill --uninstall
+
+# Cross-platform, from a local clone:
 npx . --uninstall
 
 # Windows:
