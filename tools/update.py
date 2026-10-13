@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -88,6 +89,19 @@ def get_github_token() -> str | None:
     return None
 
 
+class _DropAuthOnRedirect(urllib.request.HTTPRedirectHandler):
+    """urllib forwards every header on redirect; never hand the GitHub token to the asset CDN."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and urllib.parse.urlsplit(newurl).netloc != urllib.parse.urlsplit(req.full_url).netloc:
+            new.remove_header("Authorization")
+        return new
+
+
+_OPENER = urllib.request.build_opener(_DropAuthOnRedirect)
+
+
 def fetch_latest_release(token: str | None = None, allow_prerelease: bool = False) -> dict | None:
     """Queries GitHub Releases API for the latest compatible release."""
     token = token if token is not None else get_github_token()
@@ -100,7 +114,7 @@ def fetch_latest_release(token: str | None = None, allow_prerelease: bool = Fals
 
     req = urllib.request.Request(GITHUB_API_URL, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=10) as response:
+        with _OPENER.open(req, timeout=10) as response:
             if response.status != 200:
                 return None
             data = json.loads(response.read().decode("utf-8"))
@@ -123,12 +137,16 @@ def fetch_latest_release(token: str | None = None, allow_prerelease: bool = Fals
                 "ACCESS_DENIED: Access denied to repository releases. Verify token permissions."
             )
         if e.code == 404:
+            # A visible repo with no releases answers 200 []; 404 means the repo is not visible to us.
             if not token:
                 raise RuntimeError(
                     "AUTH_REQUIRED: Received 404 from repository API. If this is a private repository, "
                     "authentication is required. Set GITHUB_TOKEN or authenticate via 'gh auth login'."
                 )
-            return None
+            raise RuntimeError(
+                "ACCESS_DENIED: Repository not visible with current credentials (404). "
+                "Verify the token has access to this private repository."
+            )
         raise
 
 
@@ -151,7 +169,10 @@ def parse_checksums_file(sums_text: str) -> dict[str, str]:
         m = pattern.match(line)
         if m:
             hash_val, fname = m.groups()
-            entries[Path(fname.strip()).name] = hash_val.lower()
+            name = Path(fname.strip()).name
+            if entries.get(name, hash_val.lower()) != hash_val.lower():
+                raise ValueError(f"INTEGRITY_ERROR: conflicting SHA256SUMS entries for '{name}'")
+            entries[name] = hash_val.lower()
     return entries
 
 
@@ -184,7 +205,7 @@ def download_asset(asset: dict, dest_path: Path, token: str | None = None) -> No
             },
         )
         try:
-            with urllib.request.urlopen(req, timeout=30) as resp, open(dest_path, "wb") as f:
+            with _OPENER.open(req, timeout=30) as resp, open(dest_path, "wb") as f:
                 while chunk := resp.read(65536):
                     f.write(chunk)
             return
@@ -200,7 +221,7 @@ def download_asset(asset: dict, dest_path: Path, token: str | None = None) -> No
     if token:
         req.add_header("Authorization", f"Bearer {token}")
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp, open(dest_path, "wb") as f:
+        with _OPENER.open(req, timeout=30) as resp, open(dest_path, "wb") as f:
             while chunk := resp.read(65536):
                 f.write(chunk)
     except urllib.error.HTTPError as e:
@@ -213,86 +234,94 @@ def download_asset(asset: dict, dest_path: Path, token: str | None = None) -> No
         raise
 
 
-def backup_managed_skills() -> Path:
-    """Creates a local backup of currently installed managed skills with transaction manifest."""
-    import time
-    ts_str = time.strftime("%Y%m%d-%H%M%S")
-    backup_dir = BACKUP_ROOT / f"backup-{ts_str}"
-    backup_dir.mkdir(parents=True, exist_ok=True)
-
-    manifest_data = {
-        "timestamp": ts_str,
-        "items": {}
+def hash_tree(root: Path) -> dict[str, str]:
+    return {
+        p.relative_to(root).as_posix(): calculate_sha256(p)
+        for p in sorted(root.rglob("*")) if p.is_file()
     }
 
-    for agent, base_dir in get_agent_skill_dirs().items():
-        agent_backup = backup_dir / agent
-        for skill in MANAGED_SKILLS:
-            target = base_dir / skill
-            if target.exists() and (target / MANAGED_MARKER).exists():
-                dest = agent_backup / skill
-                shutil.copytree(target, dest, dirs_exist_ok=True)
-                file_hashes = {}
-                for root, _, files in os.walk(target):
-                    for file in sorted(files):
-                        p = Path(root) / file
-                        rel = p.relative_to(target).as_posix()
-                        file_hashes[rel] = calculate_sha256(p)
-                manifest_data["items"][f"{agent}/{skill}"] = {
-                    "agent": agent,
-                    "skill": skill,
-                    "target": str(target.resolve()),
-                    "files": file_hashes
-                }
 
-    manifest_file = backup_dir / "backup_manifest.json"
-    manifest_file.write_text(json.dumps(manifest_data, indent=2), encoding="utf-8")
+def managed_slots() -> dict[str, Path]:
+    """'agent/skill' -> path for every currently installed pack-managed skill."""
+    return {
+        f"{agent}/{skill}": base_dir / skill
+        for agent, base_dir in get_agent_skill_dirs().items()
+        for skill in MANAGED_SKILLS
+        if (base_dir / skill / MANAGED_MARKER).exists()
+    }
+
+
+def backup_managed_skills() -> Path:
+    """Copies every managed skill into a new backup dir with a per-file hash manifest."""
+    from datetime import datetime
+    ts_str = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    backup_dir = BACKUP_ROOT / f"backup-{ts_str}"
+    backup_dir.mkdir(parents=True)
+
+    items = {}
+    for key, target in managed_slots().items():
+        shutil.copytree(target, backup_dir / key)
+        items[key] = {"target": str(target.resolve()), "files": hash_tree(target)}
+
+    write_manifest(backup_dir, {"timestamp": ts_str, "items": items})
     return backup_dir
 
 
-def restore_backup(backup_dir: Path, newly_installed_slots: list[Path] | None = None) -> None:
-    """Restores skills from an existing backup, protecting unmanaged and user-modified skills."""
+def read_manifest(backup_dir: Path) -> dict:
+    path = backup_dir / "backup_manifest.json"
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+
+
+def write_manifest(backup_dir: Path, manifest: dict) -> None:
+    (backup_dir / "backup_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+
+def restore_backup(backup_dir: Path, snapshot_first: bool = False) -> None:
+    """Restores a backup, removing slots the following update created.
+
+    Every check runs before anything is touched. Refuses when a destination is unmanaged,
+    when a slot changed after the update recorded it ("installed" hashes), or when the
+    backup copy no longer matches its own manifest.
+    """
     if not backup_dir.exists():
         raise FileNotFoundError(f"Backup directory not found: {backup_dir}")
+    manifest = read_manifest(backup_dir)
+    items, installed = manifest.get("items", {}), manifest.get("installed", {})
 
-    # PREFLIGHT DESTINATION CHECK:
-    # Never overwrite or delete any directory that is unmanaged!
+    restores, removals = [], []
     for agent, base_dir in get_agent_skill_dirs().items():
-        agent_backup = backup_dir / agent
-        if not agent_backup.exists():
-            continue
         for skill in MANAGED_SKILLS:
-            src = agent_backup / skill
+            key = f"{agent}/{skill}"
+            src, target = backup_dir / agent / skill, base_dir / skill
+            if not src.exists() and key not in installed:
+                continue
+            if target.exists():
+                if not (target / MANAGED_MARKER).exists():
+                    raise RuntimeError(
+                        f"REFUSE: destination '{target}' is unmanaged; rollback blocked to preserve user files."
+                    )
+                if key in installed and hash_tree(target) != installed[key]:
+                    raise RuntimeError(
+                        f"REFUSE: '{target}' changed after the update; rollback blocked. Reconcile manually."
+                    )
             if src.exists():
-                target = base_dir / skill
-                if target.exists():
-                    marker = target / MANAGED_MARKER
-                    if not marker.exists():
-                        raise RuntimeError(
-                            f"REFUSE: destination '{target}' is unmanaged! "
-                            "Rollback blocked to preserve unrelated user files."
-                        )
+                if key in items and hash_tree(src) != items[key]["files"]:
+                    raise RuntimeError(f"REFUSE: backup copy '{src}' does not match its manifest.")
+                restores.append((src, target))
+            elif target.exists():
+                removals.append(target)
 
-    # Clean up newly created slots from a failed installation
-    if newly_installed_slots:
-        for slot in newly_installed_slots:
-            if slot.exists() and (slot / MANAGED_MARKER).exists():
-                shutil.rmtree(slot, ignore_errors=True)
-                print(f"Cleaned up newly created slot: {slot.name}")
-
-    # Perform restoration
-    for agent, base_dir in get_agent_skill_dirs().items():
-        agent_backup = backup_dir / agent
-        if not agent_backup.exists():
-            continue
-        for skill in MANAGED_SKILLS:
-            src = agent_backup / skill
-            if src.exists():
-                target = base_dir / skill
-                if target.exists():
-                    shutil.rmtree(target, ignore_errors=True)
-                shutil.copytree(src, target, dirs_exist_ok=True)
-                print(f"Restored {agent} -> {target.name}")
+    if snapshot_first:
+        snapshot = backup_managed_skills()
+        print(f"Saved current state first; undo this rollback with: --rollback {snapshot}")
+    for target in removals:
+        shutil.rmtree(target)
+        print(f"Removed slot created by the update: {target}")
+    for src, target in restores:
+        if target.exists():
+            shutil.rmtree(target)
+        shutil.copytree(src, target)
+        print(f"Restored {target}")
 
 
 def main() -> int:
@@ -335,7 +364,7 @@ def main() -> int:
             target_backup = Path(args.rollback)
         print(f"Restoring from: {target_backup}...")
         try:
-            restore_backup(target_backup)
+            restore_backup(target_backup, snapshot_first=True)
         except Exception as e:
             print(f"ERROR during rollback: {e}", file=sys.stderr)
             return 1
@@ -387,13 +416,21 @@ def main() -> int:
         print(f"\n[DRY-RUN] Would download: {pack_asset['name']}")
         print(f"[DRY-RUN] Would verify checksum from: {sums_asset['name'] if sums_asset else 'MISSING'}")
         print(f"[DRY-RUN] Would back up current skills to: {BACKUP_ROOT}")
-        print(f"[DRY-RUN] Would extract and invoke installer with --force")
+        print("[DRY-RUN] Would extract and invoke installer with --force for agents that already have the pack")
         return 0
 
-    # Fail fast if Node.js runtime is unavailable
+    # Fail fast, before downloading or backing up anything
+    if not sums_asset:
+        print("ERROR: INTEGRITY_ERROR: Release is missing required SHA256SUMS asset.", file=sys.stderr)
+        return 1
     node_cmd = shutil.which("node")
     if not node_cmd:
         print("ERROR: Node.js runtime is required for updating. Please install Node.js.", file=sys.stderr)
+        return 1
+    # Update only the agents that already have the pack; never spread into agent dirs the user never chose.
+    agents = sorted({key.split("/")[0] for key in managed_slots()})
+    if not agents:
+        print("ERROR: No pack-managed installation found. Install first (see README).", file=sys.stderr)
         return 1
 
     temp_dir = Path(tempfile.mkdtemp(prefix="herdr-update-"))
@@ -402,10 +439,6 @@ def main() -> int:
         archive_path = temp_dir / pack_asset["name"]
         print(f"Downloading {pack_asset['name']}...")
         download_asset(pack_asset, archive_path)
-
-        # Validate checksum: SHA256SUMS is MANDATORY
-        if not sums_asset:
-            raise ValueError("INTEGRITY_ERROR: Release is missing required SHA256SUMS asset.")
 
         sums_path = temp_dir / "SHA256SUMS"
         download_asset(sums_asset, sums_path)
@@ -440,7 +473,11 @@ def main() -> int:
         if not install_js.exists():
             raise FileNotFoundError(f"Missing installer inside archive: {install_js}")
 
-        subprocess.run([node_cmd, str(install_js), "--force"], check=True)
+        subprocess.run([node_cmd, str(install_js), "--force", "--agents", ",".join(agents)], check=True)
+        # Record what the update installed so a later rollback can detect user edits and new slots.
+        manifest = read_manifest(backup_dir)
+        manifest["installed"] = {key: hash_tree(path) for key, path in managed_slots().items()}
+        write_manifest(backup_dir, manifest)
         print(f"Update to {tag_name} completed successfully.")
     except Exception as e:
         print(f"ERROR: Update failed: {e}", file=sys.stderr)

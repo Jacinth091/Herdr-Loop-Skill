@@ -2,8 +2,9 @@
 """
 Deterministic packaging and archive validation utility for Herdr Role Pack.
 Creates release ZIP archives, validates archive safety, and calculates SHA256 checksums.
-Produces cross-platform byte-reproducible archives using normalized timestamps,
-canonical file ordering, and consistent permissions.
+Archives are deterministic for a given source tree (fixed timestamps, sorted members,
+LF line endings, fixed permissions). Cross-OS byte identity also depends on the zlib
+build, so the published SHA256SUMS, not a rebuild, is the integrity authority.
 """
 
 from __future__ import annotations

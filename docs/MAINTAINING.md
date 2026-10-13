@@ -56,7 +56,7 @@ When modifying any skill or script, you must preserve these architectural invari
 5. **Decoupled Human Progress:**  
    Machine IDs (`T01`, `T01-A2`, Herdr pane IDs) must never be presented as the primary status to human operators. Always use descriptive slice titles and observable outcomes.
 6. **Dual Backend Mutual Exclusion:**  
-   A run uses either Delegator-owned `SESSION.md` (default) or transactional `ledger.sqlite` (`state_backend: "sqlite"`). The two backends must never operate concurrently within the same run.
+   Live runs use Delegator-owned `SESSION.md`. The `ledger.sqlite` engine is an offline CLI pilot only: `tools/role_bind.py` refuses `state_backend: "sqlite"`. The two backends must never operate on the same run.
 7. **Safe Cancellation & Recovery:**  
    Cancellation must stop future scheduling, observe actual process termination via Herdr CLI, and preserve dirty worktrees and human-owned panes.
 

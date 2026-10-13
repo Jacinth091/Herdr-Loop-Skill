@@ -34,32 +34,20 @@ jobs:
 
       - name: Verify Strict SemVer, Version Alignment & Provenance
         shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
-          TAG="${GITHUB_REF#refs/tags/}"
-          python -c "
-          import json, re, sys, subprocess
-          tag = '$TAG'
-          if not re.match(r'^v[0-9]+\.[0-9]+\.[0-9]+$', tag):
-              sys.exit(f'ERROR: Tag \"{tag}\" is not strict SemVer (expected vX.Y.Z)')
-          ver = tag[1:]
-          manifest = json.load(open('manifest.json'))['version']
-          package = json.load(open('package.json'))['version']
-          if manifest != ver:
-              sys.exit(f'ERROR: manifest.json version ({manifest}) != tag ({ver})')
-          if package != ver:
-              sys.exit(f'ERROR: package.json version ({package}) != tag ({ver})')
-          changelog = open('CHANGELOG.md', encoding='utf-8').read()
-          if f'[{ver}]' not in changelog:
-              sys.exit(f'ERROR: CHANGELOG.md does not contain release section for [{ver}]')
-          try:
-              subprocess.run(['git', 'fetch', 'origin', 'main'], check=True, capture_output=True)
-              res = subprocess.run(['git', 'merge-base', '--is-ancestor', 'HEAD', 'origin/main'], capture_output=True)
-              if res.returncode != 0:
-                  print('NOTE: Tag is outside origin/main branch history.')
-          except Exception as e:
-              print(f'Provenance check note: {e}')
-          print(f'Confirmed: tag {tag} matches manifest ({manifest}), package ({package}), and CHANGELOG.')
-          "
+          set -euo pipefail
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "ERROR: tag '$TAG' is not strict vX.Y.Z"; exit 1; }
+          VER="${TAG#v}"
+          MANIFEST=$(python -c "import json; print(json.load(open('manifest.json'))['version'])")
+          PACKAGE=$(python -c "import json; print(json.load(open('package.json'))['version'])")
+          [ "$MANIFEST" = "$VER" ] || { echo "ERROR: manifest.json version $MANIFEST != tag $VER"; exit 1; }
+          [ "$PACKAGE" = "$VER" ] || { echo "ERROR: package.json version $PACKAGE != tag $VER"; exit 1; }
+          grep -qF "## [$VER]" CHANGELOG.md || { echo "ERROR: CHANGELOG.md has no '## [$VER]' section"; exit 1; }
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "ERROR: tagged commit $GITHUB_SHA is not on origin/main; refusing to release"; exit 1; }
+          echo "Confirmed: $TAG matches manifest, package, CHANGELOG and is on main."
 
       - name: Run Test Suite
         shell: bash

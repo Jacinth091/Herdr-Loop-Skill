@@ -13,7 +13,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
-## [2.8.0] - 2026-10-13
+## [2.8.0] - Unreleased
+
+> Not yet published: no `v2.8.0` tag or GitHub Release exists. Versions 2.4.0-2.7.0 below are internal
+> milestones that were never tagged or released.
 
 ### Added
 - **Skill-First Documentation:** Rebuilt `README.md` as a user-focused practical manual detailing team roles, safety requirements, and worked session walkthroughs.
@@ -29,6 +32,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Preserved Delegator-owned `SESSION.md` as the default backend for standard runs.
 - Enforced mutual exclusion between `SESSION.md` and `ledger.sqlite` in `tools/role_bind.py`.
 - Updated `tools/progress_view.py` to support querying both Markdown sessions and SQLite databases.
+
+### Fixed
+- `verify-reconcile` releases verification locks only after the recorded test PID is observed gone; unknown liveness keeps the locks.
+- `tools/update.py` requires an exact `SHA256SUMS` entry and Node.js before touching anything, authenticates private-release access (token never forwarded to the asset CDN), updates only agents that already have the pack, and refuses rollback over unmanaged or locally edited slots.
+- `bin/install.js` removes newly created slots when a fresh install fails part-way and reports incomplete rollbacks.
+- Release workflow refuses tags whose commit is not on `main`.
 
 ---
 

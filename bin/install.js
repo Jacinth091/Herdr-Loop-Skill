@@ -304,7 +304,7 @@ function main() {
               herdrSource = tempSkillDir;
             }
           } catch {
-            console.log(`INFO: 'herdr --skill' unavailable; using bundled herdr skill`);
+            console.log(`SKIP official herdr skill: 'herdr --skill' unavailable`);
           }
           if (fs.existsSync(path.join(herdrSource, 'SKILL.md'))) {
             installSkill({ source: herdrSource, baseDir: item.baseDir, skillName: 'herdr', options });
@@ -319,24 +319,30 @@ function main() {
     }
   } catch (err) {
     console.error(`ERROR during installation: ${err.message}`);
-    if (backupDir && fs.existsSync(backupDir)) {
-      console.error(`Rolling back to previous installation from ${backupDir}...`);
+    // backupDir is only created when something was backed up; a fresh install still needs its new slots removed.
+    if (backupDir) {
+      console.error('Rolling back to previous installation...');
+      let failures = 0;
       for (const item of plan) {
         const itemBackup = path.join(backupDir, item.agent, item.skillName);
-        if (item.exists && item.managed && fs.existsSync(itemBackup)) {
-          if (fs.existsSync(item.target)) {
-            fs.rmSync(item.target, { recursive: true, force: true });
-          }
-          copyDirRecursive(itemBackup, item.target);
-        } else if (!item.exists && fs.existsSync(item.target)) {
-          const marker = path.join(item.target, '.herdr-role-pack-managed');
-          if (fs.existsSync(marker)) {
+        try {
+          if (item.exists && item.managed && fs.existsSync(itemBackup)) {
+            if (fs.existsSync(item.target)) {
+              fs.rmSync(item.target, { recursive: true, force: true });
+            }
+            copyDirRecursive(itemBackup, item.target);
+          } else if (!item.exists && fs.existsSync(path.join(item.target, '.herdr-role-pack-managed'))) {
             fs.rmSync(item.target, { recursive: true, force: true });
             console.error(`Removed newly created slot: ${item.target}`);
           }
+        } catch (rollbackErr) {
+          failures++;
+          console.error(`ROLLBACK FAILED for ${item.target}: ${rollbackErr.message}`);
         }
       }
-      console.error('Rollback completed.');
+      console.error(failures
+        ? `Rollback INCOMPLETE (${failures} slot(s)); originals remain in ${backupDir}`
+        : 'Rollback completed.');
     }
     process.exit(1);
   }

@@ -258,29 +258,29 @@ def observe_stopped(pane, pid):
 
 
 def is_pid_alive(pid):
-    if not isinstance(pid, int) or pid <= 0:
-        return False
+    # Fails toward "alive": only a conclusive no-such-process answer counts as stopped.
+    # ponytail: PID reuse reads as alive (safe, may stall reconcile); grandchildren of the
+    # tracked process are not observed. Add process-start-time / job objects if that bites.
     if sys.platform == "win32":
         import ctypes
-        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-        STILL_ACTIVE = 259
-        kernel32 = ctypes.windll.kernel32
-        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
         if not handle:
-            return False
+            return ctypes.get_last_error() != 87  # ERROR_INVALID_PARAMETER: no such process
         try:
             exit_code = ctypes.c_ulong()
-            if kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
-                return exit_code.value == STILL_ACTIVE
-            return False
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                return True
+            return exit_code.value == 259  # STILL_ACTIVE
         finally:
             kernel32.CloseHandle(handle)
-    else:
-        try:
-            os.kill(pid, 0)
-            return True
-        except (ProcessLookupError, OSError):
-            return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True  # EPERM: exists but owned by someone else
+    return True
 
 
 def observe_unstarted(name):
@@ -801,13 +801,16 @@ def operation(root, args):
             pid = proc.pid
             def begin():
                 if get(conn,"verification",args.verification)["state"]!="STARTED":
-                    proc.kill()
                     fail("verification already executing")
                 conn.execute("UPDATE verification SET state='RUNNING',command=?,process_pid=? WHERE id=?",
                              (json.dumps(command),pid,args.verification))
                 return f"OK verification={args.verification} RUNNING pid={pid}"
             begin_id="begin_"+hashlib.sha256(args.request_id.encode()).hexdigest()
-            action(conn,root,"verify-exec-begin",begin_id,data,begin)
+            try:
+                action(conn,root,"verify-exec-begin",begin_id,data,begin)
+            except BaseException:
+                proc.kill(); proc.wait()
+                raise
             try:
                 stdout, stderr = proc.communicate(timeout=args.timeout)
                 exit_code = proc.returncode
@@ -867,20 +870,19 @@ def operation(root, args):
                           allowed_states=("EXECUTING","CANCELLING","CANCELLATION_BLOCKED"),check_plan=False)
         if name == "verify-reconcile":
             data=dict(verification=args.verification,reason=args.reason)
-            with closing(connect(root, True)) as read:
-                v = get(read, "verification", args.verification)
-                if v["state"] not in ("RUNNING", "UNCERTAIN"):
-                    fail(f"only running or uncertain verification can be reconciled; current state is {v['state']}")
-                pid = v["process_pid"] if "process_pid" in v.keys() else None
-                if pid and is_pid_alive(pid):
-                    fail(f"UNCERTAIN: verification process {pid} still running; cannot release claims")
-            def act():
-                v=get(conn,"verification",args.verification)
+            def require_stopped(v):
                 if v["state"] not in ("RUNNING","UNCERTAIN"):
                     fail(f"only running or uncertain verification can be reconciled; current state is {v['state']}")
-                pid = v["process_pid"] if "process_pid" in v.keys() else None
-                if pid and is_pid_alive(pid):
+                pid=v["process_pid"]
+                if not pid:
+                    fail("UNCERTAIN: no recorded verification PID; liveness unknown, claims stay held")
+                if is_pid_alive(pid):
                     fail(f"UNCERTAIN: verification process {pid} still running; cannot release claims")
+            with closing(connect(root, True)) as read:
+                require_stopped(get(read,"verification",args.verification))
+            def act():
+                v=get(conn,"verification",args.verification)
+                require_stopped(v)
                 c=get(conn,"candidate",v["candidate_id"])
                 output=root / "verifications" / (args.verification+".log")
                 if not output.exists():
