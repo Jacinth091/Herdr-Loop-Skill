@@ -116,6 +116,35 @@ class LiveSQLiteTests(unittest.TestCase):
                   'synthetic-manager-review', '--rationale', 'MANAGER.txt', '--request-id', 'decision1')
         self.assertIn('ACCEPTED', self.cmd('task-accept', '--task', 'T01', '--candidate', 'C01', '--decision-id', 'D01', '--request-id', 'accept1'))
 
+    def test_default_agy_readiness_preserves_observed_ui_profile(self):
+        self.executing()
+        self.manifest['agents'][2]['kind'] = 'agy'
+        (self.run_dir / 'ACTIVATION.json').write_text(json.dumps(self.manifest), encoding='utf8')
+        self.acknowledge('worker_a1')
+        self.task()
+        self.cmd('attempt-reserve', '--task', 'T01', '--attempt', 'T01-A1',
+                 '--checkout', str(self.worker), '--agent', 'worker_a1', '--provider', 'agy', '--request-id', 'reserve1')
+        self.cmd('attempt-attach', '--attempt', 'T01-A1', '--pane', 'w3:p1',
+                 '--agent', 'worker_a1', '--request-id', 'attach1')
+        identity = 'attempt=T01-A1\nagent=worker_a1\npane=w3:p1\n'
+        for profile, accepted in (('', False), ('observed_model=Gemini 3.8 Flash (Medium)\nobserved_effort=default\n', True)):
+            (self.run_dir / 'READY.md').write_text(identity + profile, encoding='utf8')
+            receipt = self.receipt('ROLE_READY', 'ready1', 'READY.md', 'worker_a1', 'w3:p1', 'delegator')
+            result = self.cmd('attempt-ready', '--attempt', 'T01-A1', '--operator', 'delegator',
+                              '--operator-pane', 'w1:p1', '--event-id', 'ready1', '--evidence', 'READY.md',
+                              '--receipt', receipt, '--request-id', 'record-ready1', ok=accepted)
+            self.assertIn('state=READY' if accepted else 'READY evidence', result)
+
+    def test_requested_override_readiness_still_requires_exact_match(self):
+        self.executing()
+        self.acknowledge('worker_a1')
+        self.task()
+        self.reserve()
+        ready = self.run_dir / 'READY.md'
+        ready.write_text(ready.read_text(encoding='utf8').replace('observed_effort=xhigh', 'observed_effort=default'), encoding='utf8')
+        with self.assertRaisesRegex(ledger.LedgerError, 'READY evidence'):
+            self.attach()
+
     def test_cancel_preserves_claims_until_observed_release(self):
         self.executing()
         self.task()

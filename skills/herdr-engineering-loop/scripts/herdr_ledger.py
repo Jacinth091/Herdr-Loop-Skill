@@ -947,9 +947,13 @@ def _operation(root, args):
                 if kind == "ROLE_READY":
                     ready = (root / artifact).read_text(encoding="utf-8").splitlines()
                     required_lines = (f"attempt={args.attempt}", f"agent={current['agent_hint']}",
-                                      f"pane={current['pane']}", f"observed_model={current['expected_model']}",
-                                      f"observed_effort={current['expected_effort']}")
-                    if any(line not in ready for line in required_lines):
+                                      f"pane={current['pane']}")
+                    for field in ("model", "effort"):
+                        if current[f"expected_{field}"]:
+                            required_lines += (f"observed_{field}={current[f'expected_{field}']}",)
+                    if (any(line not in ready for line in required_lines) or
+                            any(not any(line.startswith(f"observed_{field}=") for line in ready)
+                                for field in ("model", "effort"))):
                         fail("READY evidence does not match reserved attempt/model")
                 else:
                     ack=(root / artifact).read_text(encoding="utf-8").splitlines()
