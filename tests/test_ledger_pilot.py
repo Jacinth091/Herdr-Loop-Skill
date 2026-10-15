@@ -409,6 +409,32 @@ class LedgerPilotTests(unittest.TestCase):
             self.assertIn('projection path', self.cmd('export', '--write', unsafe, ok=False))
         self.assertFalse((self.run_dir.parent / 'evil.md').exists())
 
+    def test_composed_receipt_is_byte_identical_to_an_authored_receipt(self):
+        self.init();self.task();self.reserve()
+        self.cmd('attempt-attach','--attempt','T01-A1','--pane','w3:p1','--agent','worker_a1','--request-id','attach1')
+        self.assertIn('state=READY', self.cmd('attempt-ready','--attempt','T01-A1','--operator','delegator',
+            '--operator-pane','w1:p1','--event-id','c-ready1','--evidence','READY.md','--compose-receipt','--request-id','compose-ready'))
+        digest = hashlib.sha256((self.run_dir/'READY.md').read_bytes()).hexdigest()
+        composed = (self.run_dir/'receipts'/'role_ready-c-ready1.receipt').read_text(encoding='utf8')
+        self.assertEqual(f'ROLE_READY sample T01-A1 c-ready1 worker_a1 w3:p1 delegator\nevidence_sha={digest}\n', composed)
+        self.assertIn('state=STARTED', self.cmd('attempt-start','--attempt','T01-A1','--operator','delegator',
+            '--operator-pane','w1:p1','--sender-pane','w1:p1','--event-id','start1','--evidence','TASK-ACK.md',
+            '--compose-receipt','--request-id','compose-start'))
+        self.assertTrue((self.run_dir/'receipts'/'task_start-start1.receipt').is_file())
+        head = shell('git','-C',str(self.worker),'rev-parse','HEAD').stdout.strip()
+        self.assertIn('state=REPORTED', self.cmd('attempt-report','--attempt','T01-A1','--source-sha',head,
+            '--evidence','REPORT.md','--event-id','c-report1','--recipient','delegator','--compose-receipt','--request-id','compose-report'))
+        self.assertTrue((self.run_dir/'receipts'/'report_ready-c-report1.receipt').is_file())
+
+    def test_receipt_source_requires_exactly_one_input(self):
+        self.init();self.task();self.reserve()
+        self.cmd('attempt-attach','--attempt','T01-A1','--pane','w3:p1','--agent','worker_a1','--request-id','attach1')
+        base = ('--attempt','T01-A1','--operator','delegator','--operator-pane','w1:p1','--event-id','c-ready1','--evidence','READY.md')
+        self.assertIn('exactly one of', self.cmd('attempt-ready',*base,'--request-id','none1',ok=False))
+        authored = self.receipt('ROLE_READY','c-ready1','READY.md','worker_a1','w3:p1','delegator')
+        self.assertIn('exactly one of', self.cmd('attempt-ready',*base,'--receipt',authored,'--compose-receipt','--request-id','both1',ok=False))
+        self.assertFalse((self.run_dir/'receipts').exists())
+
     def test_attempt_reserve_provider_allowlist_includes_opencode(self):
         self.init();self.task()
         self.assertIn('state=RESERVED', self.cmd('attempt-reserve','--task','T01','--attempt','T01-A1',

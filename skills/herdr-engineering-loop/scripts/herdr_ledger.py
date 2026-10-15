@@ -466,12 +466,48 @@ def receipt_hash_matches(lines, digest):
     return any(line.startswith("evidence_sha=") and line.partition("=")[2].lower() == digest for line in lines)
 
 
-def signal_receipt(root, run_id, kind, attempt, event_id, sender, pane, recipient, evidence, receipt):
+RECEIPT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+
+def receipt_source(args):
+    """Exactly one of --receipt or --compose-receipt; the ledger stays the only writer when composing."""
+    path = getattr(args, "receipt", "") or ""
+    compose = bool(getattr(args, "compose_receipt", False))
+    if bool(path) == compose:
+        fail("supply exactly one of --receipt or --compose-receipt")
+    return path, compose
+
+
+def composed_receipt_path(kind, key):
+    return f"receipts/{kind.lower()}-{key}.receipt"
+
+
+def write_receipt(root, kind, key, envelope, evidence_sha):
+    """Compose the correlated envelope the ledger already validates, so callers stop authoring boilerplate."""
+    if not RECEIPT_NAME.fullmatch(str(key)):
+        fail("invalid composed receipt name")
+    relative = composed_receipt_path(kind, key)
+    directory = root / "receipts"
+    directory.mkdir(exist_ok=True)
+    target = root / relative
+    if target.is_symlink():
+        fail("composed receipt target is a symlink")
+    staged = root / (relative + ".tmp." + str(os.getpid()))
+    staged.write_text(envelope + "\n" + "evidence_sha=" + evidence_sha + "\n", encoding="utf-8")
+    os.replace(staged, target)
+    return relative
+
+
+def signal_receipt(root, run_id, kind, attempt, event_id, sender, pane, recipient, evidence, receipt, compose=False):
     if not KEY.fullmatch(event_id) or sender == recipient:
         fail("invalid signal event or recipient")
+    if compose and not (sender and pane and recipient):
+        fail("cannot compose a receipt without an observed sender, pane and recipient")
     artifact_path, artifact_sha = relative_evidence(root, evidence)
-    path, digest = relative_evidence(root, receipt)
     expected = f"{kind} {run_id} {attempt} {event_id} {sender} {pane} {recipient}"
+    if compose:
+        receipt = write_receipt(root, kind, event_id, expected, artifact_sha)
+    path, digest = relative_evidence(root, receipt)
     lines = (root / path).read_text(encoding="utf-8").splitlines()
     if expected not in lines or not receipt_hash_matches(lines, artifact_sha):
         fail("signal receipt does not contain exact correlated envelope")
@@ -592,7 +628,9 @@ def confirm_role(root, args):
     if (entry.get("model") and entry["model"] != observed["model"]) or (entry.get("reasoning_effort") and entry["reasoning_effort"] != observed["effort"]):
         fail("ROLE_NOT_READY: requested model/effort not observed")
     path, digest = relative_evidence(root, args.evidence)
-    receipt_path, receipt_sha = relative_evidence(root, args.receipt)
+    receipt_arg, receipt_compose = receipt_source(args)
+    if not receipt_compose:
+        receipt_path, receipt_sha = relative_evidence(root, receipt_arg)
     expected = (f"run={manifest['run_id']}", f"epoch={args.epoch}", f"agent={args.as_agent}",
                 f"pane={args.pane}", f"role={entry['role']}", f"operation={operation_id}",
                 f"prompt_sha={prompt_hash}")
@@ -604,6 +642,8 @@ def confirm_role(root, args):
     if recipient != "human":
         observe_recipient(recipient, args.recipient_pane)
     envelope = f"ROLE_READY {manifest['run_id']} {operation_id} {args.as_agent} {args.pane} {recipient}"
+    if receipt_compose:
+        receipt_path, receipt_sha = relative_evidence(root, write_receipt(root, "ROLE_CONFIRM", operation_id, envelope, digest))
     lines = (root / receipt_path).read_text(encoding="utf-8").splitlines()
     if envelope not in lines or not receipt_hash_matches(lines, digest):
         fail("ROLE_NOT_READY: correlated role receipt missing")
@@ -1016,8 +1056,9 @@ def _operation(root, args):
             sender = a["agent_hint"] if kind == "ROLE_READY" else args.operator
             recipient = args.operator if kind == "ROLE_READY" else a["agent_hint"]
             pane = a["pane"] if kind == "ROLE_READY" else args.sender_pane
+            receipt_arg, receipt_compose = receipt_source(args)
             artifact, artifact_sha, path, digest = signal_receipt(root, run["id"], kind, args.attempt, args.event_id,
-                                          sender, pane, recipient, args.evidence, args.receipt)
+                                          sender, pane, recipient, args.evidence, receipt_arg, receipt_compose)
             data=dict(attempt=args.attempt,event=args.event_id,evidence=artifact,evidence_sha=artifact_sha,receipt=path,hash=digest,operator=args.operator,operator_pane=args.operator_pane,sender_pane=args.sender_pane)
             prior=replay(conn,name,request,data)
             if prior:return prior
@@ -1058,7 +1099,11 @@ def _operation(root, args):
             return action(conn,root,name,request,data,act)
         if name == "attempt-report":
             path,digest=relative_evidence(root,args.evidence)
-            receipt,receipt_sha=relative_evidence(root,args.receipt)
+            receipt_arg, receipt_compose = receipt_source(args)
+            if receipt_compose:
+                receipt, receipt_sha = composed_receipt_path("REPORT_READY", args.event_id), ""
+            else:
+                receipt, receipt_sha = relative_evidence(root, receipt_arg)
             data=dict(attempt=args.attempt,evidence=path,hash=digest,source=args.source_sha,event=args.event_id,receipt=receipt,receipt_sha=receipt_sha)
             prior=replay(conn,name,request,data)
             if prior:return prior
@@ -1069,7 +1114,7 @@ def _operation(root, args):
                 _, head, _, _ = git(a["checkout"])
                 if head != args.source_sha:fail("source commit not observed at assigned checkout")
                 artifact, artifact_sha, receipt, receipt_sha = signal_receipt(root, run["id"], "REPORT_READY",
-                    args.attempt, args.event_id, a["agent_hint"], a["pane"], args.recipient, args.evidence, args.receipt)
+                    args.attempt, args.event_id, a["agent_hint"], a["pane"], args.recipient, args.evidence, receipt_arg, receipt_compose)
             def act():
                 a=get(conn,"attempt",args.attempt)
                 if a["state"]!="STARTED":fail("attempt not STARTED")
@@ -1359,7 +1404,7 @@ def parser():
     init_cmd.add_argument("--bootstrap",action="store_true")
     add("plan-approve",plan=dict(required=True),decision_id=dict(required=True),authority=dict(required=True,choices=["MANAGER","HUMAN"]),actor=dict(required=True),attestor=dict(required=True),rationale=dict(required=True),request_id=dict(required=True))
     add("run-authorize",grant_ref=dict(required=True),decision_id=dict(required=True),actor=dict(required=True),attestor=dict(required=True),request_id=dict(required=True))
-    add("role-confirm", operation_id=dict(required=True), pane=dict(required=True), recipient=dict(required=True), recipient_pane=dict(default=""), evidence=dict(required=True), receipt=dict(required=True))
+    add("role-confirm", operation_id=dict(required=True), pane=dict(required=True), recipient=dict(required=True), recipient_pane=dict(default=""), evidence=dict(required=True), receipt=dict(default="")).add_argument("--compose-receipt",action="store_true",help="Let the ledger write the correlated receipt instead of supplying --receipt")
     add("upgrade")
     add("run-cancel",decision_id=dict(required=True),actor=dict(required=True),attestor=dict(required=True),authority_source=dict(required=True),reason=dict(required=True),request_id=dict(required=True))
     add("cancel-block",evidence=dict(required=True),request_id=dict(required=True))
@@ -1379,9 +1424,9 @@ def parser():
     add("finding-record",finding=dict(required=True),review=dict(required=True),actor=dict(required=True),severity=dict(required=True,choices=["BLOCKING","HIGH","MEDIUM","LOW"]),disposition=dict(required=True,choices=["OPEN","RESOLVED","DISMISSED"]),evidence=dict(required=True),decision_id=dict(default=""),request_id=dict(required=True))
     add("attempt-reserve",task=dict(required=True),attempt=dict(required=True),checkout=dict(required=True),agent=dict(required=True),provider=dict(required=True),expected_model=dict(default=""),expected_effort=dict(default=""),request_id=dict(required=True))
     add("attempt-attach",attempt=dict(required=True),pane=dict(required=True),agent=dict(required=True),request_id=dict(required=True))
-    add("attempt-ready",attempt=dict(required=True),operator=dict(required=True),operator_pane=dict(required=True),sender_pane=dict(default=""),event_id=dict(required=True),evidence=dict(required=True),receipt=dict(required=True),request_id=dict(required=True))
-    add("attempt-start",attempt=dict(required=True),operator=dict(required=True),operator_pane=dict(required=True),sender_pane=dict(required=True),event_id=dict(required=True),evidence=dict(required=True),receipt=dict(required=True),request_id=dict(required=True))
-    add("attempt-report",attempt=dict(required=True),evidence=dict(required=True),source_sha=dict(required=True),event_id=dict(required=True),recipient=dict(required=True),receipt=dict(required=True),request_id=dict(required=True))
+    add("attempt-ready",attempt=dict(required=True),operator=dict(required=True),operator_pane=dict(required=True),sender_pane=dict(default=""),event_id=dict(required=True),evidence=dict(required=True),receipt=dict(default=""),request_id=dict(required=True)).add_argument("--compose-receipt",action="store_true",help="Let the ledger write the correlated receipt instead of supplying --receipt")
+    add("attempt-start",attempt=dict(required=True),operator=dict(required=True),operator_pane=dict(required=True),sender_pane=dict(required=True),event_id=dict(required=True),evidence=dict(required=True),receipt=dict(default=""),request_id=dict(required=True)).add_argument("--compose-receipt",action="store_true",help="Let the ledger write the correlated receipt instead of supplying --receipt")
+    add("attempt-report",attempt=dict(required=True),evidence=dict(required=True),source_sha=dict(required=True),event_id=dict(required=True),recipient=dict(required=True),receipt=dict(default=""),request_id=dict(required=True)).add_argument("--compose-receipt",action="store_true",help="Let the ledger write the correlated receipt instead of supplying --receipt")
     add("attempt-release",attempt=dict(required=True),generation=dict(required=True,type=int),observation=dict(required=True),request_id=dict(required=True))
     add("candidate-freeze",task=dict(required=True),candidate=dict(required=True),checkout=dict(required=True),request_id=dict(required=True))
     add("verify-start",verification=dict(required=True),candidate=dict(required=True),verifier=dict(required=True),gate=dict(default="local-check"),request_id=dict(required=True))

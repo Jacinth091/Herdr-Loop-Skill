@@ -145,6 +145,23 @@ class LiveSQLiteTests(unittest.TestCase):
                        '--checkout', str(self.worker), '--agent', 'worker_a1', '--provider', 'opencode', '--request-id', 'reserve-oc')
         self.assertIn('state=RESERVED', out)
 
+    def test_role_confirm_composes_the_correlated_receipt(self):
+        self.bootstrap()
+        entry = next(a for a in self.manifest['agents'] if a['name'] == 'delegator')
+        pane, recipient, op = self.pane('delegator'), entry['signal_recipient'], 'operation-delegator'
+        prompt_sha = hashlib.sha256(entry['prompt'].encode()).hexdigest()
+        ledger.store_activation(self.run_dir, dict(operation_id=op, agent='delegator', status='SUBMITTED',
+            prompt_sha256=prompt_sha, epoch=1, observed=self.observed('delegator', pane, self.repo, entry['kind'])))
+        (self.run_dir/'delegator.ready').write_text('\n'.join(('run=run','epoch=1','agent=delegator','pane='+pane,
+            'role=delegator','operation='+op,'prompt_sha='+prompt_sha)), encoding='utf8')
+        args = ledger.parser().parse_args(['--run-dir', str(self.run_dir), '--as-agent', 'delegator', '--epoch', '1',
+            'role-confirm', '--operation-id', op, '--pane', pane, '--evidence', 'delegator.ready',
+            '--recipient', recipient, '--recipient-pane', self.pane(recipient), '--compose-receipt'])
+        self.assertIn('CONFIRMED_APPLIED', ledger.operation(self.run_dir, args))
+        digest = hashlib.sha256((self.run_dir/'delegator.ready').read_bytes()).hexdigest()
+        self.assertEqual(f'ROLE_READY run {op} delegator {pane} {recipient}\nevidence_sha={digest}\n',
+                         (self.run_dir/'receipts'/f'role_confirm-{op}.receipt').read_text(encoding='utf8'))
+
     def test_requested_override_readiness_still_requires_exact_match(self):
         self.executing()
         self.acknowledge('worker_a1')

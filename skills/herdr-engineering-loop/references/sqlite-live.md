@@ -48,6 +48,12 @@ Do not re-read or re-render the ledger by hand; ask the ledger for the minimum y
 - `status [--human] [--ids]`, `next`, `task-show --task <id>` and `events --limit <n>` return compact projections; prefer them over prose logs.
 - `export` prints the non-authoritative generated view. `export --write NAME.md` writes that same view to one `NAME.md` file inside the run directory (atomic; reserved names such as `SESSION.md` are refused, and no nested paths). The file is generated only: regenerate it instead of editing, and never feed it back as a ledger input.
 
+## Composed receipts
+
+`role-confirm`, `attempt-ready`, `attempt-start` and `attempt-report` accept `--compose-receipt` in place of `--receipt`. The ledger writes the exact correlated envelope it already validates to `receipts/<kind>-<event>.receipt` (atomically), so the boilerplate no longer costs an authored file. Supply exactly one of `--receipt` or `--compose-receipt`; supplying neither or both is refused.
+
+This changes only who writes the envelope. The substantive artifact stays yours (`--evidence`), the receipt is still stored on disk and hashed into the same immutable columns, and the same envelope/hash validation runs either way. Nothing about observation, ordering or the evidence chain is relaxed.
+
 ## Shared heavy-verification gate
 
 Both backends use `scripts/verification_guard.py` and the same machine lock under `~/.herdr-locks` (or one shared `HERDR_LOCKS_DIR`). SQLite uses it automatically through `verify-start`/`verify-exec`. For Markdown, freeze the checkout and wrap each already-approved heavy command:
