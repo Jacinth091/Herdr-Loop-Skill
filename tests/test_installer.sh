@@ -5,8 +5,8 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/home"
 export HOME="$TMP/home"
-sh "$ROOT/install.sh" --agents claude,codex,agy --roles manager,worker,critic > "$TMP/installed.txt"
-for dir in "$HOME/.claude/skills" "$HOME/.agents/skills" "$HOME/.gemini/antigravity-cli/skills"; do
+sh "$ROOT/install.sh" --agents claude,codex,agy,opencode --roles manager,worker,critic > "$TMP/installed.txt"
+for dir in "$HOME/.claude/skills" "$HOME/.agents/skills" "$HOME/.gemini/antigravity-cli/skills" "$HOME/.config/opencode/skills"; do
   test -f "$dir/herdr-worker/SKILL.md"
   test -f "$dir/herdr-manager/SKILL.md"
   test -f "$dir/herdr-critic/SKILL.md"
@@ -14,7 +14,7 @@ for dir in "$HOME/.claude/skills" "$HOME/.agents/skills" "$HOME/.gemini/antigrav
   test -f "$dir/herdr-worker/.herdr-role-pack-managed"
   grep -qF "Herdr Role Pack v$(sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' "$ROOT/manifest.json" | head -n 1)" "$dir/herdr-worker/.herdr-role-pack-managed"
 done
-sh "$ROOT/install.sh" --agents claude,codex,agy --roles manager,worker,critic > "$TMP/second.txt"
+sh "$ROOT/install.sh" --agents claude,codex,agy,opencode --roles manager,worker,critic > "$TMP/second.txt"
 grep -q 'SKIP already installed' "$TMP/second.txt"
 # The lead role brings the Manager and Delegator contracts it is built on.
 sh "$ROOT/install.sh" --agents claude --roles lead > "$TMP/lead.txt"

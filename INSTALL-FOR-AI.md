@@ -1,6 +1,6 @@
 # Installing Herdr Loop Skill: instructions for AI agents
 
-**You are an AI coding agent and your user asked you to install Herdr Loop Skill for yourself.** Follow these steps in order. They work for Claude Code, Codex and Agy, and for any other CLI that loads skills from `SKILL.md` folders.
+**You are an AI coding agent and your user asked you to install Herdr Loop Skill for yourself.** Follow these steps in order. They work for Claude Code, Codex, Agy and OpenCode, and for any other CLI that loads skills from `SKILL.md` folders.
 
 Herdr Loop Skill is a set of role skills (Controller, Manager, Delegator, Lead, Worker, Verifier, Critic) that coordinate several coding agents inside [Herdr](https://herdr.dev). Installing only copies Markdown skill folders into a skills directory. It does not start agents, change code or need admin rights.
 
@@ -18,6 +18,7 @@ Herdr Loop Skill is a set of role skills (Controller, Manager, Delegator, Lead, 
 | Claude Code | `~/.claude/skills` | `--agents claude` |
 | Codex CLI | `~/.agents/skills` | `--agents codex` |
 | Agy CLI | `~/.gemini/antigravity-cli/skills` | `--agents agy` |
+| OpenCode | `~/.config/opencode/skills` | `--agents opencode` |
 | Any other CLI | The folder your tool loads user-level `SKILL.md` skill folders from. Check your own documentation or configuration; if you are not sure, ask the user. | `--target-dir "<absolute path>"` |
 
 Use an absolute path with `--target-dir` (`~` is not expanded inside quotes). If your tool has no skills feature at all, skip to [Step 5](#step-5-if-your-tool-has-no-skills-feature).

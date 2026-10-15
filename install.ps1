@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Install the Herdr Role Pack for Claude, Codex and Agy CLI on Windows.
+  Install the Herdr Role Pack for Claude, Codex, Agy and OpenCode CLI on Windows.
 .EXAMPLE
   powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 .EXAMPLE
@@ -10,7 +10,7 @@
 #>
 [CmdletBinding()]
 param(
-  [ValidateSet('All','Claude','Codex','Agy')][string[]]$Agents = @('All'),
+  [ValidateSet('All','Claude','Codex','Agy','Opencode')][string[]]$Agents = @('All'),
   [ValidateSet('All','Controller','Manager','Delegator','Lead','Worker','Verifier','Critic')][string[]]$Roles = @('All'),
   [switch]$Force,
   [switch]$DryRun,
@@ -33,11 +33,12 @@ $skillNames = @{
 $roleNames = if ($Roles -contains 'All') { @('Controller','Manager','Delegator','Lead','Worker','Verifier','Critic') } else { @($Roles | Select-Object -Unique) }
 # The Lead role is built on the Manager and Delegator contracts, so it always brings them along.
 if ($roleNames -contains 'Lead') { $roleNames = @(@($roleNames) + @('Manager','Delegator') | Select-Object -Unique) }
-$agentNames = if ($Agents -contains 'All') { @('Claude','Codex','Agy') } else { @($Agents | Select-Object -Unique) }
+$agentNames = if ($Agents -contains 'All') { @('Claude','Codex','Agy','Opencode') } else { @($Agents | Select-Object -Unique) }
 $agentDirs = @{
   Claude = Join-Path $HOME '.claude\skills'
   Codex = Join-Path $HOME '.agents\skills'
   Agy = Join-Path $HOME '.gemini\antigravity-cli\skills'
+  Opencode = Join-Path $HOME '.config\opencode\skills'
 }
 
 function Install-PackSkill {

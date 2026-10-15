@@ -113,7 +113,7 @@ class PackageAndUpdateTests(unittest.TestCase):
 
     def isolate(self):
         """Point the updater at a throwaway home so no test touches real installs or backups."""
-        self.dirs = {a: self.temp_dir / "home" / a for a in ("claude", "codex", "agy")}
+        self.dirs = {a: self.temp_dir / "home" / a for a in ("claude", "codex", "agy", "opencode")}
         for d in self.dirs.values():
             d.mkdir(parents=True)
         self.backups = self.temp_dir / "backups"
@@ -252,6 +252,26 @@ class PackageAndUpdateTests(unittest.TestCase):
         version = json.loads((ROOT / "manifest.json").read_text(encoding="utf-8"))["version"]
         marker = home / ".claude" / "skills" / "herdr-manager" / update.MANAGED_MARKER
         self.assertEqual(marker.read_text(encoding="utf-8").strip(), f"Herdr Role Pack v{version}")
+
+    @unittest.skipUnless(shutil.which("node"), "node not installed")
+    def test_node_installer_supports_opencode_agent(self):
+        # OpenCode loads user-level skills from ~/.config/opencode/skills.
+        home = self.temp_dir / "home"
+        home.mkdir()
+        env = dict(os.environ, HOME=str(home), USERPROFILE=str(home))
+        result = subprocess.run(
+            ["node", str(ROOT / "bin" / "install.js"), "--agents", "opencode", "--roles", "controller,worker", "--force"],
+            check=True, capture_output=True, text=True, env=env)
+        self.assertIn("INSTALLED", result.stdout)
+        base = home / ".config" / "opencode" / "skills"
+        self.assertTrue((base / "herdr-engineering-loop" / "SKILL.md").is_file())
+        self.assertTrue((base / "herdr-worker" / update.MANAGED_MARKER).is_file())
+        # The other agent folders must not be touched by a scoped install.
+        self.assertFalse((home / ".claude").exists())
+        self.assertFalse((home / ".agents").exists())
+
+    def test_updater_knows_opencode_skill_dir(self):
+        self.assertEqual(update.get_agent_skill_dirs()["opencode"], Path.home() / ".config" / "opencode" / "skills")
 
     # --- integrity gates (AUTH-02) ---
 

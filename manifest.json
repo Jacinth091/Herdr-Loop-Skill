@@ -14,7 +14,8 @@
   "target_agents": [
     "claude",
     "codex",
-    "agy"
+    "agy",
+    "opencode"
   ],
   "installers": [
     "install.ps1",

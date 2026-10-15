@@ -42,8 +42,8 @@ python tools/update.py
 ### What Happens During Update:
 1. **Integrity Check:** The updater downloads the release archive and verifies its SHA-256 digest against the exact entry in `SHA256SUMS`. A release without `SHA256SUMS`, without an entry for the archive, or with a mismatch is refused before anything is extracted or backed up.
 2. **Safety Scan:** Archive members are scanned to ensure no path traversal (`..`) or unsafe directories exist.
-3. **Automated Backup:** All currently installed managed skills across Claude, Codex, and Agy are backed up to a timestamped folder under `~/.herdr-backups/backup-<timestamp>/`.
-4. **Staged Replacement:** New skills are installed only for the agents (Claude, Codex, Agy) that already have the pack. Unmanaged user folders and unrelated skills are never touched.
+3. **Automated Backup:** All currently installed managed skills across Claude, Codex, Agy, and OpenCode are backed up to a timestamped folder under `~/.herdr-backups/backup-<timestamp>/`.
+4. **Staged Replacement:** New skills are installed only for the agents (Claude, Codex, Agy, OpenCode) that already have the pack. Unmanaged user folders and unrelated skills are never touched.
 5. **Fail-Closed Guarantee:** If any step fails during update, the previous installation is automatically restored from the backup.
 
 ---

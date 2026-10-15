@@ -1,6 +1,6 @@
 # Herdr Loop Skill
 
-A structured, role-based workflow for coordinating autonomous coding agents (Claude Code, Codex, and Agy CLI) in [Herdr](https://herdr.dev).
+A structured, role-based workflow for coordinating autonomous coding agents (Claude Code, Codex, Agy CLI and OpenCode) in [Herdr](https://herdr.dev).
 
 Rather than relying on one unbounded mega-prompt or a complex external daemon, Herdr Loop Skill equips agents with **bounded, specialized role skills**. Agents collaborate inside their own Herdr workspaces and panes using isolated Git worktrees, sequential test gates, and explicit handoffs.
 
@@ -78,6 +78,7 @@ The skill operates entirely through local Markdown packets, Git commits, and sta
    - Claude Code (`claude`)
    - Codex CLI (`codex`)
    - Agy CLI (`agy`)
+   - OpenCode (`opencode`)
 3. **Git:** Repository must have clean Git worktree support.
 4. **Permissions:** The skill uses the active CLI's normal permission flow. For an authorized in-scope command, an agent may request approval through its own native tool when available and must wait for the real decision. It never requires Administrator/root privileges, changes ACLs/policies, or disables sandboxes.
 
@@ -85,11 +86,11 @@ The skill operates entirely through local Markdown packets, Git commits, and sta
 
 ## 5. Install in One Minute
 
-The installer places the skills into your user-level agent configuration folders (`~/.claude/skills`, `~/.agents/skills`, `~/.gemini/antigravity-cli/skills`).
+The installer places the skills into your user-level agent configuration folders (`~/.claude/skills`, `~/.agents/skills`, `~/.gemini/antigravity-cli/skills`, `~/.config/opencode/skills`).
 
 ### Let Your AI Install It
 
-Paste this into the AI coding CLI you want to use (Claude Code, Codex, Agy or any other CLI that loads `SKILL.md` skills):
+Paste this into the AI coding CLI you want to use (Claude Code, Codex, Agy, OpenCode or any other CLI that loads `SKILL.md` skills):
 
 ```text
 Install Herdr Loop Skill for yourself by following
@@ -119,6 +120,7 @@ That's it: `npx` fetches the pack from GitHub and runs the installer. It backs u
 | Try the latest unreleased `main` | `npx github:Jacinth091/Herdr-Loop-Skill --force` |
 | Install for Claude Code only | `npx github:Jacinth091/Herdr-Loop-Skill#v2.8.1 --agents claude` |
 | Install for Claude Code and Codex only | `npx github:Jacinth091/Herdr-Loop-Skill#v2.8.1 --agents claude,codex` |
+| Install for OpenCode only | `npx github:Jacinth091/Herdr-Loop-Skill#v2.8.1 --agents opencode` |
 | Claude as Manager + Critic | `npx github:Jacinth091/Herdr-Loop-Skill#v2.8.1 --agents claude --roles controller,manager,critic` |
 | Codex as Delegator | `npx github:Jacinth091/Herdr-Loop-Skill#v2.8.1 --agents codex --roles controller,delegator` |
 | One agent as Manager + Delegator (Lead), to save cost | `npx github:Jacinth091/Herdr-Loop-Skill#v2.8.1 --agents claude --roles controller,lead` |
@@ -129,7 +131,7 @@ That's it: `npx` fetches the pack from GitHub and runs the installer. It backs u
 | Remove it from one agent only | `npx github:Jacinth091/Herdr-Loop-Skill --uninstall --agents agy` |
 | See all options | `npx github:Jacinth091/Herdr-Loop-Skill --help` |
 
-- **Agents:** `claude`, `codex`, `agy`, or `all` (the default).
+- **Agents:** `claude`, `codex`, `agy`, `opencode`, or `all` (the default).
 - **Roles:** `controller` (the `herdr-engineering-loop` session skill), `manager`, `delegator`, `lead` (also installs `manager` and `delegator`, which it builds on), `worker`, `verifier`, `critic`, or `all` (the default). Keep `controller` in any role subset: it is the skill that sets up and coordinates the run.
 - **Flags combine freely**, e.g. `--agents claude --roles controller,manager --dry-run`.
 - **Pinning:** `#v2.8.1` installs exactly that published release. Leave it off to get whatever is on `main` right now. Replace it with a newer tag (see [Releases](https://github.com/Jacinth091/Herdr-Loop-Skill/releases)) to upgrade.
@@ -140,7 +142,7 @@ That's it: `npx` fetches the pack from GitHub and runs the installer. It backs u
 # Preview actions without writing:
 npx . --dry-run
 
-# Install for Claude Code, Codex, and Agy CLI:
+# Install for Claude Code, Codex, Agy CLI, and OpenCode:
 npx .
 
 # Force refresh existing installed copies:
