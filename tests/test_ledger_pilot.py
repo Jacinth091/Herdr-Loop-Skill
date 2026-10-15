@@ -438,7 +438,8 @@ class LedgerPilotTests(unittest.TestCase):
 
     def test_generated_command_reference_matches_the_parser(self):
         committed = (ROOT / 'skills' / 'herdr-engineering-loop' / 'references' / 'command-reference.md').read_text(encoding='utf8')
-        self.assertEqual(ledger.command_reference(), committed)
+        # Compare content, not checkout line endings: a fresh Windows clone rewrites LF to CRLF.
+        self.assertEqual(ledger.command_reference().replace('\r\n', '\n'), committed.replace('\r\n', '\n'))
         for role in ('manager', 'delegator', 'lead', 'worker', 'verifier', 'critic'):
             self.assertIn(f'`{role}`: ', committed)
         for name in ledger._subcommands():
