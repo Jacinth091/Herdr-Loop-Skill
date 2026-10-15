@@ -40,6 +40,14 @@ For subsequent mutations, supply global `--as-agent <assigned-name> --epoch <cur
 
 CLI assertions and local receipt files do not authenticate humans or provider-side delivery. Record only decisions and receipts actually observed. Mocked tests do not satisfy the live Windows gate.
 
+## Bounded state reads
+
+Do not re-read or re-render the ledger by hand; ask the ledger for the minimum you need.
+
+- `packet --role <role> [--agent <name>]` prints the bounded next-step directive: run/state/backend/epoch, `NEXT` (the owning command, or `none for role=...` when another role owns it), the role's allowed `MAY-RUN` commands, plus `READY`, `ACTIVE` and open `BLOCKERS`. Use it instead of reading a status document.
+- `status [--human] [--ids]`, `next`, `task-show --task <id>` and `events --limit <n>` return compact projections; prefer them over prose logs.
+- `export` prints the non-authoritative generated view. `export --write NAME.md` writes that same view to one `NAME.md` file inside the run directory (atomic; reserved names such as `SESSION.md` are refused, and no nested paths). The file is generated only: regenerate it instead of editing, and never feed it back as a ledger input.
+
 ## Shared heavy-verification gate
 
 Both backends use `scripts/verification_guard.py` and the same machine lock under `~/.herdr-locks` (or one shared `HERDR_LOCKS_DIR`). SQLite uses it automatically through `verify-start`/`verify-exec`. For Markdown, freeze the checkout and wrap each already-approved heavy command:

@@ -372,6 +372,43 @@ class LedgerPilotTests(unittest.TestCase):
         self.assertIn('PLAN.md changed', self.reserve(ok=False))
         self.assertEqual('READY T01 Prevent duplicate writes',self.cmd('next'))
 
+    def test_packet_gives_role_scoped_next_action(self):
+        self.init();self.task()
+        def line(text, label):
+            return next(l for l in text.splitlines() if l.startswith(label))
+        delegator = self.cmd('packet', '--role', 'delegator')
+        self.assertEqual('NEXT: attempt-reserve T01', line(delegator, 'NEXT:'))
+        self.assertIn('attempt-reserve', line(delegator, 'MAY-RUN:'))
+        self.assertNotIn('plan-approve', line(delegator, 'MAY-RUN:'))
+        verifier = self.cmd('packet', '--role', 'verifier')
+        self.assertIn('none for role=verifier', line(verifier, 'NEXT:'))
+        self.assertIn('verify-exec', line(verifier, 'MAY-RUN:'))
+        self.assertNotIn('attempt-reserve', line(verifier, 'MAY-RUN:'))
+        for role in ('manager', 'delegator', 'lead', 'worker', 'verifier', 'critic'):
+            self.assertIn(f'role={role}', self.cmd('packet', '--role', role))
+        self.reserve();self.attach();self.report()
+        self.assertEqual('NEXT: candidate-freeze T01', line(self.cmd('packet', '--role', 'delegator'), 'NEXT:'))
+
+    def test_packet_reports_planning_state(self):
+        self.cmd('init', '--run-id', 'sample', '--repo', str(self.repo), '--bootstrap')
+        packet = self.cmd('packet', '--role', 'manager')
+        self.assertIn('state=PLANNING', packet)
+        self.assertIn('NEXT: plan-approve PLAN.md', packet)
+
+    def test_export_write_projection_is_generated_and_never_a_ledger(self):
+        self.init();self.task()
+        self.assertIn('wrote=STATUS.md', self.cmd('export', '--write', 'STATUS.md'))
+        text = (self.run_dir / 'STATUS.md').read_text(encoding='utf8')
+        self.assertIn('non-authoritative', text)
+        self.assertIn('Prevent duplicate writes', text)
+        self.assertFalse((self.run_dir / 'SESSION.md').exists())
+        self.assertIn('mode=sqlite-pilot', self.cmd('status'))
+        for reserved in ('SESSION.md', 'ledger.sqlite', 'ROSTER.md', 'backend.active.json'):
+            self.assertIn('reserved', self.cmd('export', '--write', reserved, ok=False))
+        for unsafe in ('../evil.md', 'sub/evil.md', 'no-extension'):
+            self.assertIn('projection path', self.cmd('export', '--write', unsafe, ok=False))
+        self.assertFalse((self.run_dir.parent / 'evil.md').exists())
+
     def test_attempt_reserve_provider_allowlist_includes_opencode(self):
         self.init();self.task()
         self.assertIn('state=RESERVED', self.cmd('attempt-reserve','--task','T01','--attempt','T01-A1',
