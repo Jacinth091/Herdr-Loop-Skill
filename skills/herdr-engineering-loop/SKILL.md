@@ -157,10 +157,10 @@ sequenceDiagram
     participant Manager as Manager
 
     Note over Ledger: 1. Initialization & Plan Sync
-    Delegator->>Ledger: init + plan-sync (PLAN.md v1)
+    Delegator->>Ledger: init + plan-approve (PLAN.md)
     
     Note over Ledger,Worker: 2. Worker Attempt & Handshake
-    Delegator->>Ledger: task-reserve (T01, T01-A1, worktree)
+    Delegator->>Ledger: attempt-reserve (T01, T01-A1, worktree)
     Delegator->>Ledger: attempt-attach (workspace, pane, agent)
     Worker-->>Delegator: READY.md written + ROLE_READY signal
     Delegator->>Ledger: attempt-ready (receipt + evidence)
@@ -183,17 +183,9 @@ sequenceDiagram
     Delegator->>Ledger: task-accept (T01 ACCEPTED)
 ```
 
-### Command Sequence Summary:
-1. `task-reserve`: Fences the task and worker workspace; increments attempt counter.
-2. `attempt-attach`: Reads Herdr runtime PID and registration; transitions state to `OBSERVED`.
-3. `attempt-ready`: Verifies worker-local `READY.md` containing observed model, pane, and agent.
-4. `attempt-start`: Unlocks source implementation; records operator receipt and approved plan SHA.
-5. `attempt-report`: Verifies worker git commit and report existence; marks attempt `REPORTED`.
-6. `candidate-freeze`: Calculates `git patch-id` on both worker and integration commits; rejects mismatched changes.
-7. `verify-start`: Fences the checkout and acquires the run-wide `active_verification_lock`.
-8. `verify-exec`: Executes approved test command synchronously; logs stdout/stderr and exit code.
-9. `decision-record`: Binds the Manager's architectural decision and rationale to candidate SHA.
-10. `task-accept`: Marks task slice `ACCEPTED` only if candidate verification is passing and approved.
+### Command reference:
+
+The exact arguments of every command, and the command list for each role, are generated from the CLI itself: read [Ledger command reference](references/command-reference.md), print your own list with `python herdr_ledger.py --run-dir <run> reference --role <role>`, or print the whole reference with `reference`. Do not hand-maintain command lists in prose. Step-by-step semantics live in [SQLite role procedure](references/sqlite-live.md); bounded reads (`status`, `next`, `packet`, `task-show`, `events`, `recover`) accept `--json` and report their own byte/token cost so you can budget context.
 
 ---
 

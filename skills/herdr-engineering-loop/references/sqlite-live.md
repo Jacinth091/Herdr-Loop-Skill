@@ -45,7 +45,9 @@ CLI assertions and local receipt files do not authenticate humans or provider-si
 Do not re-read or re-render the ledger by hand; ask the ledger for the minimum you need.
 
 - `packet --role <role> [--agent <name>]` prints the bounded next-step directive: run/state/backend/epoch, `NEXT` (the owning command, or `none for role=...` when another role owns it), the role's allowed `MAY-RUN` commands, plus `READY`, `ACTIVE` and open `BLOCKERS`. Use it instead of reading a status document.
-- `status [--human] [--ids]`, `next`, `task-show --task <id>` and `events --limit <n>` return compact projections; prefer them over prose logs.
+- `status [--human] [--ids]`, `next`, `task-show --task <id>`, `events --limit <n>` and `recover` return compact projections; prefer them over prose logs. Plain `status` also reports `view_bytes`/`view_tokens`, the measured cost of the detailed human view, so you can decide whether to read it.
+- Add `--json` to any of those reads for a machine-readable payload carrying a `read_cost` (`text_bytes`, `approx_tokens`). Prefer it when another tool parses the result.
+- Exact arguments for every command, and the command list for each role, are generated from the CLI itself: [command reference](command-reference.md), `herdr_ledger.py --run-dir <run> reference` for all of it, or `--role <role>` for just yours (the smallest useful read).
 - `export` prints the non-authoritative generated view. `export --write NAME.md` writes that same view to one `NAME.md` file inside the run directory (atomic; reserved names such as `SESSION.md` are refused, and no nested paths). The file is generated only: regenerate it instead of editing, and never feed it back as a ledger input.
 
 ## Composed receipts
@@ -53,6 +55,17 @@ Do not re-read or re-render the ledger by hand; ask the ledger for the minimum y
 `role-confirm`, `attempt-ready`, `attempt-start` and `attempt-report` accept `--compose-receipt` in place of `--receipt`. The ledger writes the exact correlated envelope it already validates to `receipts/<kind>-<event>.receipt` (atomically), so the boilerplate no longer costs an authored file. Supply exactly one of `--receipt` or `--compose-receipt`; supplying neither or both is refused.
 
 This changes only who writes the envelope. The substantive artifact stays yours (`--evidence`), the receipt is still stored on disk and hashed into the same immutable columns, and the same envelope/hash validation runs either way. Nothing about observation, ordering or the evidence chain is relaxed.
+
+## Model and effort observation
+
+`attempt-attach` reads the agent's identity, pane, PID and terminal from Herdr, but derives the observed model and effort from the **agent process arguments**: `-m`/`--model`, and Codex's `-c model_reasoning_effort=...`. Nothing else is inspected, so:
+
+- Codex exposes model and effort; Claude exposes a model.
+- Agy and OpenCode expose neither unless the launch passes an explicit `--model`; observed values are then empty.
+- Reserve an OpenCode attempt **without** `--expected-model`/`--expected-effort`. A reserved expectation that cannot be observed blocks `attempt-attach` with `MODEL_OVERRIDE_NOT_APPLIED`.
+- READY evidence must still carry `observed_model=` and `observed_effort=` lines. Empty values are accepted; missing lines are not.
+
+Governed OpenCode roles are therefore observed for identity but not for model selection.
 
 ## Shared heavy-verification gate
 

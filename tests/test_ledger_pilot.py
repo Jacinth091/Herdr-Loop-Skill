@@ -1,6 +1,7 @@
 """Offline proof for the opt-in SQLite ledger. Never launches Herdr or AI tools."""
 import hashlib
 import importlib.util
+import json
 import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -435,6 +436,50 @@ class LedgerPilotTests(unittest.TestCase):
         self.assertIn('exactly one of', self.cmd('attempt-ready',*base,'--receipt',authored,'--compose-receipt','--request-id','both1',ok=False))
         self.assertFalse((self.run_dir/'receipts').exists())
 
+    def test_generated_command_reference_matches_the_parser(self):
+        committed = (ROOT / 'skills' / 'herdr-engineering-loop' / 'references' / 'command-reference.md').read_text(encoding='utf8')
+        self.assertEqual(ledger.command_reference(), committed)
+        for role in ('manager', 'delegator', 'lead', 'worker', 'verifier', 'critic'):
+            self.assertIn(f'`{role}`: ', committed)
+        for name in ledger._subcommands():
+            self.assertTrue(any(l.startswith(f"- `{name}") for l in committed.splitlines()), name)
+
+    def test_reference_command_lists_role_commands_without_a_ledger(self):
+        text = self.cmd('reference')
+        self.assertIn('## Role command lists', text)
+        self.assertIn('`verifier`: ', text)
+        self.assertIn('`verify-exec`', text)
+        verifier = self.cmd('reference', '--role', 'verifier')
+        self.assertIn('verify-exec', verifier)
+        self.assertNotIn('attempt-reserve', verifier)
+        self.assertLess(len(verifier), len(text))
+        self.assertFalse((self.run_dir / 'ledger.sqlite').exists())
+
+    def test_json_reads_are_machine_readable_with_a_read_cost(self):
+        self.init();self.task()
+        status = json.loads(self.cmd('status', '--json'))
+        self.assertEqual('sqlite-pilot', status['mode'])
+        self.assertGreater(status['human_view_cost']['text_bytes'], 0)
+        self.assertGreaterEqual(status['read_cost']['approx_tokens'], 1)
+        self.assertEqual(['T01'], [r['id'] for r in json.loads(self.cmd('next', '--json'))['ready']])
+        show = json.loads(self.cmd('task-show', '--task', 'T01', '--json'))
+        self.assertEqual('T01', show['task'])
+        self.assertEqual([], show['deps'])
+        self.assertEqual('Only one record remains', show['outcome'])
+        events = json.loads(self.cmd('events', '--limit', '5', '--json'))
+        self.assertTrue(events['events'])
+        self.assertTrue(all({'seq', 'op', 'receipt'} <= set(e) for e in events['events']))
+        self.assertTrue(json.loads(self.cmd('recover', '--json'))['never_auto_respawn'])
+        packet = json.loads(self.cmd('packet', '--role', 'verifier', '--json'))
+        self.assertIn('verify-exec', packet['may_run'])
+        self.assertNotIn('attempt-reserve', packet['may_run'])
+        self.assertIn('none for role=verifier', packet['next'])
+
+    def test_status_reports_the_cost_of_the_human_view(self):
+        self.init();self.task()
+        cost = ledger.size_proxy(self.cmd('status', '--human'))
+        self.assertIn(f"view_bytes={cost['text_bytes']} view_tokens={cost['approx_tokens']}", self.cmd('status'))
+
     def test_attempt_reserve_provider_allowlist_includes_opencode(self):
         self.init();self.task()
         self.assertIn('state=RESERVED', self.cmd('attempt-reserve','--task','T01','--attempt','T01-A1',
@@ -459,6 +504,29 @@ class LedgerPilotTests(unittest.TestCase):
                               capture_output=True, text=True, timeout=15)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn('mode=sqlite-pilot', proc.stdout)
+
+    def test_real_cli_persists_rows_in_the_sqlite_ledger(self):
+        """The database, not stdout, is the record: assert rows written by real CLI processes."""
+        def cli(*args):
+            proc = subprocess.run([sys.executable, str(CLI), '--run-dir', str(self.run_dir), *args],
+                                  capture_output=True, text=True, timeout=30)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            return proc.stdout
+        cli('init', '--run-id', 'R01', '--repo', str(self.repo), '--plan', 'PLAN.md',
+            '--grant-ref', 'human-request')
+        cli('task-add', '--task', 'T01', '--title', 'Prevent duplicate writes',
+            '--outcome', 'Only one record remains', '--brief', 'TASK.md', '--request-id', 'add-T01')
+        cli('attempt-reserve', '--task', 'T01', '--attempt', 'T01-A1', '--checkout', str(self.worker),
+            '--agent', 'worker_a1', '--provider', 'codex', '--expected-model', 'gpt-6-luna',
+            '--expected-effort', 'xhigh', '--request-id', 'res1')
+        with closing(sqlite3.connect(self.run_dir / 'ledger.sqlite')) as db:
+            self.assertEqual(('R01', 'EXECUTING'), db.execute("SELECT id, state FROM run").fetchone())
+            self.assertEqual(('T01', 'ACTIVE'), db.execute("SELECT id, state FROM task").fetchone())
+            self.assertEqual(('T01-A1', 'RESERVED'), db.execute("SELECT id, state FROM attempt").fetchone())
+            events = db.execute("SELECT op, receipt FROM event ORDER BY seq").fetchall()
+            self.assertEqual(3, len(events))
+            self.assertTrue(all(receipt for _, receipt in events), events)
+            self.assertEqual(1, db.execute("SELECT COUNT(*) FROM claim WHERE active=1").fetchone()[0])
 
     def test_concurrent_reservations_same_checkout_only_one_wins(self):
         self.init(parallel=True);self.task();self.task('T02',title='Independent second slice')
@@ -512,6 +580,21 @@ class LedgerPilotTests(unittest.TestCase):
         with mock.patch.object(ledger,'herdr_json',side_effect=[agent,process]):
             with self.assertRaisesRegex(ledger.LedgerError,'HERDR_IDENTITY_MISMATCH'):
                 REAL_OBSERVER('worker_a1','w3:p1',self.worker,'codex')
+
+    def test_observer_cannot_read_opencode_model_or_effort_from_arguments(self):
+        # OpenCode's argv carries no -m/--model or -c model_reasoning_effort=, so governed
+        # OpenCode attempts must not reserve an expectation the observer can never confirm.
+        agent={'agent':{'name':'oc_probe','pane_id':'w3:p1','cwd':str(self.worker),'terminal_id':'term-test'}}
+        process={'process_info':{'pane_id':'w3:p1','foreground_processes':[{'name':'opencode.exe','pid':1234,
+            'cwd':str(self.worker),'argv':['opencode.exe','--session','ses-test']}]}}
+        with mock.patch.object(ledger,'herdr_json',side_effect=[agent,process]):
+            observed=REAL_OBSERVER('oc_probe','w3:p1',self.worker,'opencode')
+        self.assertEqual('',observed['model'])
+        self.assertEqual('',observed['effort'])
+        process['process_info']['foreground_processes'][0]['argv']=[
+            'opencode.exe','--session','ses-test','--model','anthropic/sonnet']
+        with mock.patch.object(ledger,'herdr_json',side_effect=[agent,process]):
+            self.assertEqual('anthropic/sonnet',REAL_OBSERVER('oc_probe','w3:p1',self.worker,'opencode')['model'])
 
     def test_observer_checks_stopped_or_closed_pane(self):
         with mock.patch.object(ledger, 'herdr_json', return_value={'panes': [{'pane_id': 'w1:p1'}]}):

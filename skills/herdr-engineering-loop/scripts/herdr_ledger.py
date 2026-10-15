@@ -83,6 +83,16 @@ def stamp():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def size_proxy(text):
+    """Byte and estimated-token cost of a read, so callers can budget context before reading it."""
+    raw = text.encode("utf-8")
+    return {"text_bytes": len(raw), "approx_tokens": (len(raw) + 3) // 4}
+
+
+def as_json(payload):
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
 def fingerprint(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
@@ -706,8 +716,87 @@ def role_operations(role):
     return sorted(allowed)
 
 
-def render_packet(conn, run, tasks, role, agent, backend, epoch):
-    """Bounded, role-scoped next-step directive so agents never re-read a Markdown ledger."""
+def status_human(run, tasks, ids=False):
+    """One shared human view, so its byte/token cost can be measured before anyone reads it."""
+    lines = ["# Work progress", f"Run: {run['state'].replace('_',' ').title()}"]
+    labels = {"PLANNED": "Planned", "ACTIVE": "In progress", "REPORTED": "Awaiting independent review",
+              "BLOCKED": "Blocked", "ACCEPTED": "Accepted", "CANCELLED": "Cancelled"}
+    for t in tasks[:12]:
+        suffix = f" ({t['id']})" if ids else ""
+        lines.append(f"- **{t['title']}{suffix}**: {labels.get(t['state'],'Needs reconciliation')} | {t['outcome']}")
+    if len(tasks) > 12:
+        lines.append(f"({len(tasks)-12} more; use task-show)")
+    return "\n".join(lines)
+
+
+ROLE_ORDER = ("manager", "delegator", "lead", "worker", "verifier", "critic")
+READ_ONLY_COMMANDS = ("events", "export", "next", "packet", "recover", "status", "task-show")
+
+
+def _subcommands():
+    for action in parser()._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            return action.choices
+    return {}
+
+
+def _synopsis(name, sub):
+    parts = [name]
+    for a in sub._actions:
+        if a.dest == "help":
+            continue
+        if not a.option_strings:
+            label = f"<{a.metavar or a.dest}>" + ("..." if a.nargs in (argparse.REMAINDER, argparse.PARSER, "+") else "")
+            parts.append(label if a.required and a.nargs not in ("?", argparse.OPTIONAL) else f"[{label}]")
+        elif a.nargs == 0:
+            parts.append(f"[{a.option_strings[0]}]")
+        else:
+            if a.metavar:
+                value = a.metavar
+            elif a.choices:
+                value = "|".join(str(c) for c in a.choices)
+            else:
+                value = a.dest
+            flag = f"{a.option_strings[0]} <{value}>"
+            parts.append(flag if a.required else f"[{flag}]")
+    return " ".join(parts)
+
+
+def command_reference(role=None):
+    """Generated role-command lists and synopses; the parser and role maps are the only source of truth."""
+    commands = _subcommands()
+    if role is not None:
+        if role not in ROLE_ORDER:
+            fail("unknown role")
+        lines = [f"# Ledger command reference for role={role} (generated)", "",
+                 "Generated from the ledger CLI. Do not hand-edit; regenerate with",
+                 f"`python herdr_ledger.py --run-dir <any> reference --role {role}`.", "",
+                 "## Commands this role may run", ""]
+        for name in role_operations(role):
+            lines.append(f"- `{_synopsis(name, commands[name])}`")
+        lines += ["", "Mutations outside this list are refused for your role.", ""]
+        return "\n".join(lines)
+    lines = ["# Ledger command reference (generated)", "",
+             "Generated from the ledger CLI itself (its parser and role maps). Do not hand-edit this file:",
+             "regenerate it with `python herdr_ledger.py --run-dir <any> reference`.", "",
+             "Read one role's list with `reference --role <role>`.", "",
+             "## Role command lists", ""]
+    for role_name in ROLE_ORDER:
+        lines.append(f"- `{role_name}`: " + ", ".join(f"`{c}`" for c in role_operations(role_name)))
+    lines += ["", "Every role may also run the read-only commands "
+              + ", ".join(f"`{c}`" for c in READ_ONLY_COMMANDS) + ".",
+              "Each assigned role records its own `role-confirm` activation acknowledgment.", "",
+              "## Commands", ""]
+    for name in sorted(commands):
+        lines.append(f"- `{_synopsis(name, commands[name])}`")
+    lines += ["", "## Global options", "",
+              "- `--run-dir <path>` (required for every command except `reference`, which ignores it)",
+              "- `--as-agent <name>` and `--epoch <n>` (required for governed mutations in a selected run)", ""]
+    return "\n".join(lines)
+
+
+def packet_payload(conn, run, tasks, role, agent, backend, epoch):
+    """Structured, role-scoped next-step directive shared by the text and JSON renderings."""
     allowed = role_operations(role)
     ready_ids = [t["id"] for t in tasks if run["state"] == "EXECUTING" and ready(conn, t["id"])]
     active = [f"{t['id']}:{t['state']}" for t in tasks if t["state"] in ("ACTIVE", "REPORTED")]
@@ -737,19 +826,27 @@ def render_packet(conn, run, tasks, role, agent, backend, epoch):
     else:
         names = (action,) if isinstance(action, str) else tuple(action)
         nxt = text if any(n in allowed for n in names) else f"none for role={role}; pending {text}"
-    identity = f"PACKET run={run['id']} role={role}" + (f" agent={agent}" if agent else "")
+    return {"run": run["id"], "role": role, "agent": agent, "state": run["state"], "backend": backend,
+            "epoch": epoch, "next": nxt, "may_run": allowed, "ready": ready_ids, "active": active,
+            "blockers": blockers + uncertain}
+
+
+def render_packet(conn, run, tasks, role, agent, backend, epoch):
+    """Bounded, role-scoped next-step directive so agents never re-read a Markdown ledger."""
+    p = packet_payload(conn, run, tasks, role, agent, backend, epoch)
+    identity = f"PACKET run={p['run']} role={p['role']}" + (f" agent={p['agent']}" if p["agent"] else "")
     return "\n".join([
-        identity + f" state={run['state']} backend={backend} epoch={epoch}",
-        "NEXT: " + nxt,
-        "MAY-RUN: " + ",".join(allowed),
-        "READY: " + (",".join(ready_ids) or "-"),
-        "ACTIVE: " + (",".join(active) or "-"),
-        "BLOCKERS: " + (",".join(blockers + uncertain) or "NONE"),
+        identity + f" state={p['state']} backend={p['backend']} epoch={p['epoch']}",
+        "NEXT: " + p["next"],
+        "MAY-RUN: " + ",".join(p["may_run"]),
+        "READY: " + (",".join(p["ready"]) or "-"),
+        "ACTIVE: " + (",".join(p["active"]) or "-"),
+        "BLOCKERS: " + (",".join(p["blockers"]) or "NONE"),
     ])
 
 
 def operation(root, args):
-    if args.command in ("status", "next", "task-show", "recover", "events", "packet", "verify-exec") or (
+    if args.command in ("status", "next", "task-show", "recover", "events", "packet", "verify-exec", "reference") or (
             args.command == "export" and not getattr(args, "write", None)):
         return _operation(root, args)
     try:
@@ -761,8 +858,10 @@ def operation(root, args):
 
 def _operation(root, args):
     name = args.command
-    if name not in ("init", "upgrade", "status", "next", "task-show", "recover", "events", "export", "packet"):
+    if name not in ("init", "upgrade", "status", "next", "task-show", "recover", "events", "export", "packet", "reference"):
         role_guard(root, args)
+    if name == "reference":
+        return command_reference(getattr(args, "role", None))
     if name == "role-confirm":
         return confirm_role(root, args)
     if name == "upgrade":
@@ -812,12 +911,24 @@ def _operation(root, args):
         if name in ("status", "next", "task-show", "recover", "events", "export", "packet"):
             run = one(conn, "SELECT * FROM run LIMIT 1")
             if not run:fail("run metadata missing")
+            wants_json = bool(getattr(args, "json", False))
             if name == "task-show":
                 t=get(conn, "task", args.task)
-                return f"task={t['id']} state={t['state']} title={t['title']}\noutcome={t['outcome']} deps={','.join(json.loads(t['deps'])) or '-'} brief={t['brief_path']}"
+                deps=json.loads(t["deps"])
+                text=(f"task={t['id']} state={t['state']} title={t['title']}\n"
+                      f"outcome={t['outcome']} deps={','.join(deps) or '-'} brief={t['brief_path']}")
+                if wants_json:
+                    return as_json({"command":name,"task":t["id"],"state":t["state"],"title":t["title"],
+                                    "outcome":t["outcome"],"deps":deps,"brief":t["brief_path"],
+                                    "read_cost":size_proxy(text)})
+                return text
             if name == "events":
                 rows=conn.execute("SELECT seq,op,receipt FROM event ORDER BY seq DESC LIMIT ?", (args.limit,)).fetchall()
-                return "\n".join(f"{r['seq']} {r['op']} {r['receipt']}" for r in rows)
+                text="\n".join(f"{r['seq']} {r['op']} {r['receipt']}" for r in rows)
+                if wants_json:
+                    return as_json({"command":name,"limit":args.limit,"events":[dict(r) for r in rows],
+                                    "read_cost":size_proxy(text)})
+                return text
             tasks = conn.execute("SELECT * FROM task ORDER BY id").fetchall()
             if name == "export":
                 text = render_projection(conn, run, tasks)
@@ -827,29 +938,49 @@ def _operation(root, args):
             if name == "packet":
                 backend, selector = run_backend.get_active_backend(root)
                 epoch = selector["epoch"] if selector else 1
-                return render_packet(conn, run, tasks, args.role, getattr(args, "agent", "") or "", backend, epoch)
+                ident, agent = args.role, getattr(args, "agent", "") or ""
+                text = render_packet(conn, run, tasks, ident, agent, backend, epoch)
+                if wants_json:
+                    payload = packet_payload(conn, run, tasks, ident, agent, backend, epoch)
+                    payload["command"] = name
+                    payload["read_cost"] = size_proxy(text)
+                    return as_json(payload)
+                return text
             if name == "next":
                 can=[t for t in tasks if run["state"]=="EXECUTING" and ready(conn,t["id"])]
-                return "\n".join(f"READY {t['id']} {t['title']}" for t in can[:5]) or "NO_READY_TASK"
+                text="\n".join(f"READY {t['id']} {t['title']}" for t in can[:5]) or "NO_READY_TASK"
+                if wants_json:
+                    return as_json({"command":name,"ready":[{"id":t["id"],"title":t["title"]} for t in can[:5]],
+                                    "read_cost":size_proxy(text)})
+                return text
             if name == "status":
                 counts={s:sum(1 for t in tasks if t["state"]==s) for s in ("PLANNED","ACTIVE","REPORTED","ACCEPTED","BLOCKED")}
                 nexts=[t["id"] for t in tasks if run["state"]=="EXECUTING" and ready(conn,t["id"])]
                 active=[t["id"] for t in tasks if t["state"] in ("ACTIVE","REPORTED")]
+                view = status_human(run, tasks, args.ids)
                 if args.human:
-                    lines=["# Work progress",f"Run: {run['state'].replace('_',' ').title()}"]
-                    labels={"PLANNED":"Planned", "ACTIVE":"In progress", "REPORTED":"Awaiting independent review", "BLOCKED":"Blocked", "ACCEPTED":"Accepted", "CANCELLED":"Cancelled"}
-                    for t in tasks[:12]:
-                        suffix=f" ({t['id']})" if args.ids else ""
-                        lines.append(f"- **{t['title']}{suffix}**: {labels.get(t['state'],'Needs reconciliation')} | {t['outcome']}")
-                    if len(tasks)>12:lines.append(f"({len(tasks)-12} more; use task-show)")
-                    return "\n".join(lines)
-                return f"run={run['id']} state={run['state']} mode=sqlite-pilot next={','.join(nexts[:3]) or '-'} active={','.join(active[:3]) or '-'} accepted={counts['ACCEPTED']} blocked={counts['BLOCKED']} tasks={len(tasks)}"
+                    return view
+                text=(f"run={run['id']} state={run['state']} mode=sqlite-pilot next={','.join(nexts[:3]) or '-'} "
+                      f"active={','.join(active[:3]) or '-'} accepted={counts['ACCEPTED']} blocked={counts['BLOCKED']} "
+                      f"tasks={len(tasks)}")
+                cost=size_proxy(view)
+                if wants_json:
+                    payload={"command":name,"run":run["id"],"state":run["state"],"mode":"sqlite-pilot",
+                             "next":nexts[:3],"active":active[:3],"tasks":len(tasks),"counts":counts,
+                             "human_view_cost":cost,"read_cost":size_proxy(text)}
+                    return as_json(payload)
+                return f"{text} view_bytes={cost['text_bytes']} view_tokens={cost['approx_tokens']}"
             unknown=conn.execute("SELECT id,state,pane FROM attempt WHERE state IN ('RESERVED','OBSERVED','READY','STARTED','UNCERTAIN','BLOCKED') ORDER BY id LIMIT 5").fetchall()
             checks=conn.execute("SELECT id FROM verification WHERE state IN ('STARTED','RUNNING','UNCERTAIN') ORDER BY id LIMIT 5").fetchall()
-            return (f"recovery={run['id']} state={run['state']} never-auto-respawn\n"+
+            text=(f"recovery={run['id']} state={run['state']} never-auto-respawn\n"+
                     "\n".join(f"ATTENTION attempt={a['id']} state={a['state']} pane={a['pane'] or '?'} observe-Herdr-first" for a in unknown)+
                     ("\n" if unknown else "")+
                     "\n".join(f"ATTENTION verify={c['id']} lock-held inspect-process" for c in checks))
+            if wants_json:
+                return as_json({"command":name,"run":run["id"],"state":run["state"],"never_auto_respawn":True,
+                                "attempts":[dict(a) for a in unknown],"verifications":[c["id"] for c in checks],
+                                "read_cost":size_proxy(text)})
+            return text
         request = args.request_id
         if name == "run-cancel":
             path,digest=relative_evidence(root,args.reason)
@@ -1411,12 +1542,18 @@ def parser():
     add("cancel-finalize",decision_id=dict(required=True),request_id=dict(required=True))
     add("status").add_argument("--human",action="store_true")
     sub.choices["status"].add_argument("--ids",action="store_true",help="Include internal task IDs in human view")
+    sub.choices["status"].add_argument("--json",action="store_true",help="Machine-readable JSON plus a read-cost proxy")
     add("export").add_argument("--write", metavar="NAME.md", help="Also write the generated view to NAME.md inside the run directory")
-    add("next")
-    add("packet", role=dict(required=True,choices=["manager","delegator","lead","worker","verifier","critic"]), agent=dict(default=""))
-    add("recover")
-    add("events").add_argument("--limit",type=int,default=8,choices=range(1,21),metavar="1..20")
-    add("task-show",task=dict(required=True))
+    add("reference").add_argument("--role", choices=list(ROLE_ORDER), help="Print only this role's command list")
+    add("next").add_argument("--json",action="store_true",help="Machine-readable JSON plus a read-cost proxy")
+    packet_cmd = add("packet", role=dict(required=True,choices=["manager","delegator","lead","worker","verifier","critic"]), agent=dict(default=""))
+    packet_cmd.add_argument("--json",action="store_true",help="Machine-readable JSON plus a read-cost proxy")
+    add("recover").add_argument("--json",action="store_true",help="Machine-readable JSON plus a read-cost proxy")
+    events_cmd = add("events")
+    events_cmd.add_argument("--limit",type=int,default=8,choices=range(1,21),metavar="1..20")
+    events_cmd.add_argument("--json",action="store_true",help="Machine-readable JSON plus a read-cost proxy")
+    show_cmd = add("task-show",task=dict(required=True))
+    show_cmd.add_argument("--json",action="store_true",help="Machine-readable JSON plus a read-cost proxy")
     add("task-add",task=dict(required=True),title=dict(required=True),outcome=dict(required=True),brief=dict(required=True),deps=dict(default=""),request_id=dict(required=True)).add_argument("--critique-required",action="store_true")
     add("decision-record",decision_id=dict(required=True),subject=dict(required=True),authority=dict(required=True,choices=["MANAGER","HUMAN"]),actor=dict(required=True),attestor=dict(required=True),disposition=dict(required=True,choices=["APPROVED","REJECTED"]),provenance=dict(required=True),rationale=dict(required=True),request_id=dict(required=True))
     add("task-retry",task=dict(required=True),decision_id=dict(required=True),request_id=dict(required=True))
