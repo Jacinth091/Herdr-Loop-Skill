@@ -204,6 +204,21 @@ class RolePackTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("not supported for role manager", result.stderr)
 
+    def test_opencode_kind_is_known_in_every_role(self):
+        self.config["agents"]["manager"]["kind"] = "opencode"
+        self.config["agents"]["delegator"]["kind"] = "opencode"
+        self.config["agents"]["workers"][0]["kind"] = "opencode"
+        self.save()
+        result = self.bind()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("unverified kind", result.stderr)
+        roles = json.loads((self.repo / ".herdr-loop" / "feature-example" / "ACTIVATION.json").read_text(encoding="utf8"))["agents"]
+        manager = next(a for a in roles if a["role"] == "manager")
+        worker = next(a for a in roles if a["role"] == "worker")
+        self.assertEqual(manager["kind"], "opencode")
+        self.assertIn("@herdr-manager", manager["prompt"])
+        self.assertIn("@herdr-worker", worker["prompt"])
+
     def test_parallel_budget_requires_explicit_authorization(self):
         for count in (2, 3):
             with self.subTest(workers=count):

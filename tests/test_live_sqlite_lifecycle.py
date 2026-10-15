@@ -135,6 +135,16 @@ class LiveSQLiteTests(unittest.TestCase):
                               '--receipt', receipt, '--request-id', 'record-ready1', ok=accepted)
             self.assertIn('state=READY' if accepted else 'READY evidence', result)
 
+    def test_opencode_provider_reserves_governed_worker(self):
+        self.executing()
+        self.manifest['agents'][2]['kind'] = 'opencode'
+        (self.run_dir / 'ACTIVATION.json').write_text(json.dumps(self.manifest), encoding='utf8')
+        self.acknowledge('worker_a1')
+        self.task()
+        out = self.cmd('attempt-reserve', '--task', 'T01', '--attempt', 'T01-A1',
+                       '--checkout', str(self.worker), '--agent', 'worker_a1', '--provider', 'opencode', '--request-id', 'reserve-oc')
+        self.assertIn('state=RESERVED', out)
+
     def test_requested_override_readiness_still_requires_exact_match(self):
         self.executing()
         self.acknowledge('worker_a1')

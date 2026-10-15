@@ -17,7 +17,7 @@ import sys
 import tempfile
 
 
-KNOWN_HARNESSES = {"codex": "codex", "claude": "claude", "agy": "agy"}
+KNOWN_HARNESSES = {"codex": "codex", "claude": "claude", "agy": "agy", "opencode": "opencode"}
 SECRET_ASSIGNMENT = re.compile(
     r"(?i)\b(token|password|secret|api[_-]?key|authorization)(\s*[:=]\s*)([^\s,;]+)"
 )
@@ -229,7 +229,7 @@ def main(argv=None):
     p.add_argument("--workspace", type=Path, required=True, help="Assigned worker workspace, never a parent folder")
     p.add_argument("--agent", help="Observed named Herdr agent, not role label")
     p.add_argument("--pane", help="Expected pane ID, compared to HERDR_PANE_ID when available")
-    p.add_argument("--harness-kind", help="Explicit active CLI kind (codex, claude, agy, or another kind)")
+    p.add_argument("--harness-kind", help="Explicit active CLI kind (codex, claude, agy, opencode, or another kind)")
     p.add_argument("--probe-write", action="store_true", help="Create/remove one temporary file ONLY in workspace/.herdr-loop")
     p.add_argument("--skip-herdr", action="store_true", help="Local-only filesystem troubleshooting; NOT proof of agent origin")
     args = p.parse_args(argv)

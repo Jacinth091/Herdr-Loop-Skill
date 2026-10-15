@@ -888,8 +888,8 @@ def _operation(root, args):
             data=dict(task=args.task,attempt=args.attempt,checkout=checkout,agent=args.agent,provider=args.provider,
                       model=args.expected_model,effort=args.expected_effort)
             def act():
-                if args.provider not in ("codex", "claude", "agy"):
-                    fail("provider must be codex, claude or agy")
+                if args.provider not in ("codex", "claude", "agy", "opencode"):
+                    fail("provider must be codex, claude, agy or opencode")
                 if args.provider=="codex" and (not args.expected_model or args.expected_effort not in ("xhigh", "max")):
                     fail("Codex worker must declare expected model and xhigh/max effort")
                 run=guarded(conn,root)

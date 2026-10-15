@@ -27,6 +27,12 @@ Official references: [Claude Code Auto mode](https://claude.com/resources/articl
 - Antigravity documents different permission controls on Windows than on macOS/Linux; confirm the actual installed version and Windows UI before describing a capability. A permission preset or `--sandbox` option does not prove that a particular Herdr command can request approval.
 - Official references: [Agent permissions](https://www.antigravity.google/docs/permissions) and [Agent settings](https://www.antigravity.google/docs/agent-settings).
 
+## OpenCode
+
+- OpenCode hosts many providers, so the effective model and permission behavior depend on the configured provider and session. Treat approval capability as `UNVERIFIED` until the running session visibly offers a native request for the exact command and you confirm its result.
+- Load the assigned role skill by mentioning `@skill-id` (or through the `skill` tool) and stay inside that role. Do not enable an auto-approve/"always allow" setting, or edit OpenCode configuration, to test or obtain approval.
+- Official reference: [OpenCode skills](https://opencode.ai/v2/docs/skills).
+
 ## Other or unknown CLI kinds
 
-Treat approval capability as `UNVERIFIED` until the current runtime visibly offers a native request and the exact supported path is confirmed. Permit read-only discovery and a manual user-owned next step. Do not borrow Codex, Claude, or Agy behavior or add unverified launch flags.
+Treat approval capability as `UNVERIFIED` until the current runtime visibly offers a native request and the exact supported path is confirmed. Permit read-only discovery and a manual user-owned next step. Do not borrow Codex, Claude, Agy, or OpenCode behavior or add unverified launch flags.

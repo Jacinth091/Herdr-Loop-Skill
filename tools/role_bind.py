@@ -21,17 +21,18 @@ SKILLS = {
     "manager": "herdr-manager", "delegator": "herdr-delegator", "lead": "herdr-lead",
     "worker": "herdr-worker", "verifier": "herdr-verifier", "critic": "herdr-critic",
 }
-# Role rules for the three CLIs this pack knows. Any other agent kind is accepted in
-# any role with a warning: its CLI-specific behavior (launch flags, skill syntax) is unverified.
+# Role rules for the CLIs this pack knows (Claude Code, Codex, Agy, OpenCode). Any other
+# agent kind is accepted in any role with a warning: its CLI-specific behavior (launch
+# flags, skill syntax) is unverified.
 KINDS = {
-    "manager": {"claude", "codex"},
-    "delegator": {"claude", "codex"},
-    "lead": {"claude", "codex"},
-    "worker": {"agy", "codex", "claude"},
-    "verifier": {"claude", "codex", "agy"},
-    "critic": {"claude", "codex", "agy"},
+    "manager": {"claude", "codex", "opencode"},
+    "delegator": {"claude", "codex", "opencode"},
+    "lead": {"claude", "codex", "opencode"},
+    "worker": {"agy", "codex", "claude", "opencode"},
+    "verifier": {"claude", "codex", "agy", "opencode"},
+    "critic": {"claude", "codex", "agy", "opencode"},
 }
-KNOWN_KINDS = {"claude", "codex", "agy"}
+KNOWN_KINDS = {"claude", "codex", "agy", "opencode"}
 NAME = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 RUN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")
 MODEL_ID = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$")
@@ -160,7 +161,7 @@ def read_and_validate(config_path, override_run=None):
             raise ValueError("Agent assigned more than one role: " + name)
         seen.add(name)
         if not isinstance(kind, str) or not NAME.fullmatch(kind):
-            raise ValueError(f"Agent {name}: kind must be a CLI name like claude, codex, agy or another lowercase slug")
+            raise ValueError(f"Agent {name}: kind must be a CLI name like claude, codex, agy, opencode or another lowercase slug")
         if kind not in KNOWN_KINDS:
             warnings.append(f"Agent {name} uses unverified kind {kind!r}: confirm `herdr agent start --kind {kind}` works "
                             "and that this CLI loads SKILL.md skills (see INSTALL-FOR-AI.md)")
@@ -219,6 +220,8 @@ def read_and_validate(config_path, override_run=None):
 def skill_cmd(kind, skill):
     if kind not in KNOWN_KINDS:
         return f"the {skill} skill (load its SKILL.md)"
+    if kind == "opencode":
+        return "@" + skill
     return ("$" if kind == "codex" else "/") + skill
 
 

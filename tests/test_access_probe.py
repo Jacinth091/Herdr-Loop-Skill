@@ -55,6 +55,28 @@ class AccessProbeTests(unittest.TestCase):
         self.assertIsNone(result["server_reachable"])
         self.assertIsNone(result["herdr_version"])
 
+    def test_opencode_harness_kind_is_known(self):
+        calls = []
+
+        def completed(argv, **kwargs):
+            calls.append(argv[0])
+            if argv[0] == "git":
+                return self.git_ok(argv)
+            if argv[-1] == "--version":
+                return subprocess.CompletedProcess(argv, 0, "opencode 1.2.3", "")
+            return subprocess.CompletedProcess(argv, 0, "ready", "")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / ".herdr-loop").mkdir()
+            with mock.patch.dict(os.environ, {"HERDR_ENV": "1", "HERDR_PANE_ID": "pane-1"}), \
+                    mock.patch.object(access_probe.shutil, "which", side_effect=lambda name: name), \
+                    mock.patch.object(access_probe.subprocess, "run", side_effect=completed):
+                result = access_probe.inspect(Path(tmp), "worker", "pane-1", True, False, "opencode")
+
+        self.assertIn("opencode", calls)
+        self.assertEqual(result["harness_kind"], "opencode")
+        self.assertEqual(result["harness_version"], "1.2.3")
+
     def test_wrong_pane_blocks_origin(self):
         def completed(argv, **kwargs):
             if argv[0] == "git":

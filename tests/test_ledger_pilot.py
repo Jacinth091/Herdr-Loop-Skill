@@ -372,6 +372,13 @@ class LedgerPilotTests(unittest.TestCase):
         self.assertIn('PLAN.md changed', self.reserve(ok=False))
         self.assertEqual('READY T01 Prevent duplicate writes',self.cmd('next'))
 
+    def test_attempt_reserve_provider_allowlist_includes_opencode(self):
+        self.init();self.task()
+        self.assertIn('state=RESERVED', self.cmd('attempt-reserve','--task','T01','--attempt','T01-A1',
+            '--checkout',str(self.worker),'--agent','worker_a1','--provider','opencode','--request-id','reserve-oc'))
+        self.assertIn('provider must be', self.cmd('attempt-reserve','--task','T01','--attempt','T01-A2',
+            '--checkout',str(self.worker),'--agent','worker_a1','--provider','gemini','--request-id','reserve-bad',ok=False))
+
     def test_conflicting_checkout_claim_and_generation(self):
         self.init(parallel=True);self.task();self.task('T02',title='Independent second slice')
         self.reserve()

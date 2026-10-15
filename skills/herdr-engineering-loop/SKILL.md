@@ -110,7 +110,7 @@ For a direct one-off assignment, follow [Standalone Mode](../herdr-worker/SKILL.
 
 Read [Model Routing](references/model-routing.md) before launching any worker, verifier, or critic.
 
-**Other AI CLIs.** The model names in this pack (Haiku, Sonnet, `gpt-6-luna`) are defaults for Claude, Codex and Agy, not requirements. Any CLI that Herdr can start and that loads `SKILL.md` skills can hold a role; `tools/role_bind.py` accepts its kind with a warning. Rules that name Codex (the override-launch table below, `spawn_agent`) apply only to Codex. In governed runs, every agent is a named Herdr agent in its own pane, never an in-process subagent, and Workers never run tests. Standalone Workers follow `herdr-worker` and may run bounded, authorized self-checks. Every role stays inside its own skill.
+**Other AI CLIs.** The model names in this pack (Haiku, Sonnet, `gpt-6-luna`) are defaults for Claude, Codex, Agy and OpenCode, not requirements. `tools/role_bind.py` recognizes `claude`, `codex`, `agy` and `opencode` in every role; any other kind that Herdr can start and that loads `SKILL.md` skills is accepted with a warning. Rules that name Codex (the override-launch table below, `spawn_agent`) apply only to Codex. In governed runs, every agent is a named Herdr agent in its own pane, never an in-process subagent, and Workers never run tests. Standalone Workers follow `herdr-worker` and may run bounded, authorized self-checks. Every role stays inside its own skill.
 
 Due to CLI environment restrictions, a **Codex Delegator cannot launch a model-overridden Codex CLI worker** (`-m gpt-6-luna -c model_reasoning_effort='"xhigh"'`). Follow this dispatch table:
 
@@ -133,9 +133,12 @@ herdr agent start critic_t01 --kind claude --pane <pane-id> -- --model claude-so
 
 # Agy CLI Worker (normal configured permissions; check flags on the target platform):
 herdr agent start worker_t01 --kind agy --pane <pane-id>
+
+# OpenCode Worker (any configured provider/model; verify the effective model):
+herdr agent start worker_t01 --kind opencode --pane <pane-id>
 ```
 
-Governed work and approval-path checks use Agy's normal permission flow. The optional smooth unattended mode is limited to a human-selected disposable worktree, with Agy sandbox active before `--dangerously-skip-permissions` is used; see [Agy worker launch](references/herdr-cli.md) and [Native permission capability by harness](references/permission-capabilities.md). Never use it to recover from a denial or sandbox failure.
+Governed work and approval-path checks use Agy's normal permission flow. The optional smooth unattended mode is limited to a human-selected disposable worktree, with Agy sandbox active before `--dangerously-skip-permissions` is used; see [Agy worker launch](references/herdr-cli.md) and [Native permission capability by harness](references/permission-capabilities.md). Never use it to recover from a denial or sandbox failure. OpenCode loads a skill by mentioning `@skill-id` or via its `skill` tool; confirm the installed CLI's effective model and native approval behavior before relying on them.
 
 Always verify actual model and reasoning effort via `herdr agent get <name>` before prompting.
 

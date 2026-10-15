@@ -67,7 +67,7 @@ The skill operates entirely through local Markdown packets, Git commits, and sta
 | **Controller** | `herdr-engineering-loop` | Setup & bootstrap entrypoint; provisions topology, binds role packets, coordinates recovery. | Orchestration entrypoint; not a day-to-day engineering persona. |
 
 > [!NOTE]
-> Provider and model names (Claude, Codex, Agy) are interchangeable recommendations based on capability, not fixed identities. Roles are assigned dynamically per run via `roles.json`.
+> Provider and model names (Claude, Codex, Agy, OpenCode) are interchangeable recommendations based on capability, not fixed identities. Roles are assigned dynamically per run via `roles.json`.
 
 ---
 

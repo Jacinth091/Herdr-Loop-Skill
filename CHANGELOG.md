@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ## [Unreleased]
 
 ### Added
+- **Governed OpenCode support:** `tools/role_bind.py` now recognizes `opencode` as a known agent kind in every role and loads its skills as `@skill-id`; `tools/access_probe.py` classifies the harness; and `herdr_ledger.py attempt-reserve` accepts `--provider opencode`, so OpenCode can hold governed roles in both Markdown and SQLite runs. Approval capability stays `UNVERIFIED` until the installed CLI offers a native request.
 - **OpenCode install target:** `install.sh`, `install.ps1`, `bin/install.js`, and `tools/update.py` now accept `opencode` as an agent, installing the role skills into the user-level `~/.config/opencode/skills` folder that OpenCode loads. `manifest.json` advertises `opencode` in `target_agents`.
 - **Backend transfer for planning checkpoints:** `run_backend.py switch --to <markdown|sqlite>` moves a pristine planning run between backends. It requires `--dry-run` first, a human approval file that quotes the source fingerprint, an immutable archive, and a journaled two-phase cutover. `run_backend.py recover` finishes or rolls back an interrupted transfer. Runs with tasks, claims, verification, approvals, or edited Markdown are refused and left unchanged.
 
