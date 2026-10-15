@@ -440,6 +440,11 @@ class LedgerPilotTests(unittest.TestCase):
         committed = (ROOT / 'skills' / 'herdr-engineering-loop' / 'references' / 'command-reference.md').read_text(encoding='utf8')
         # Compare content, not checkout line endings: a fresh Windows clone rewrites LF to CRLF.
         self.assertEqual(ledger.command_reference().replace('\r\n', '\n'), committed.replace('\r\n', '\n'))
+        # A guarded REMAINDER positional must render as required on every interpreter:
+        # argparse 3.13 changed its default to required=False, which would otherwise drift.
+        self.assertIn('verify-exec ', committed)
+        self.assertIn('<argv>...', committed)
+        self.assertNotIn('[<argv>...]', committed)
         for role in ('manager', 'delegator', 'lead', 'worker', 'verifier', 'critic'):
             self.assertIn(f'`{role}`: ', committed)
         for name in ledger._subcommands():

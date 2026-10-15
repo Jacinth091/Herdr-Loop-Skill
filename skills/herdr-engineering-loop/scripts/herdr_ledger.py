@@ -740,6 +740,12 @@ def _subcommands():
     return {}
 
 
+# Requiredness comes from nargs alone. argparse changed the default for REMAINDER positionals
+# in 3.13, so trusting action.required would drift the generated text by interpreter version.
+# Only "?" and "*" make a positional optional; a guarded command is still a required argument.
+OPTIONAL_NARGS = (argparse.OPTIONAL, argparse.ZERO_OR_MORE)
+
+
 def _synopsis(name, sub):
     parts = [name]
     for a in sub._actions:
@@ -747,7 +753,7 @@ def _synopsis(name, sub):
             continue
         if not a.option_strings:
             label = f"<{a.metavar or a.dest}>" + ("..." if a.nargs in (argparse.REMAINDER, argparse.PARSER, "+") else "")
-            parts.append(label if a.required and a.nargs not in ("?", argparse.OPTIONAL) else f"[{label}]")
+            parts.append(label if a.nargs not in OPTIONAL_NARGS else f"[{label}]")
         elif a.nargs == 0:
             parts.append(f"[{a.option_strings[0]}]")
         else:

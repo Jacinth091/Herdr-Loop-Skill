@@ -49,7 +49,7 @@ Each assigned role records its own `role-confirm` activation acknowledgment.
 - `task-show --task <task> [--json]`
 - `upgrade`
 - `verify-abort --verification <verification> --reason <reason> --request-id <request_id>`
-- `verify-exec --verification <verification> [--timeout <timeout>] --request-id <request_id> [<argv>...]`
+- `verify-exec --verification <verification> [--timeout <timeout>] --request-id <request_id> <argv>...`
 - `verify-reconcile --verification <verification> --reason <reason> --request-id <request_id>`
 - `verify-record --verification <verification> --result <PASS|FAIL|INDETERMINATE> --exit-code <exit_code> --evidence <evidence> --request-id <request_id>`
 - `verify-start --verification <verification> --candidate <candidate> --verifier <verifier> [--gate <gate>] --request-id <request_id>`
