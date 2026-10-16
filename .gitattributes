@@ -1,0 +1,13 @@
+# Normalize text to LF in the repository so that generated artifacts and shell
+# scripts behave identically regardless of a contributor's core.autocrlf setting.
+# A Windows checkout with core.autocrlf=true must not change what a byte-compared
+# generated file contains, and install.sh / test_installer.sh must stay LF for Linux CI.
+* text=auto
+*.sh text eol=lf
+*.py text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.js text eol=lf
+*.mjs text eol=lf
