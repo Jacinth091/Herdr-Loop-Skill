@@ -396,6 +396,23 @@ class RolePackTests(unittest.TestCase):
                          "independent verification", "explicit deny", "dirty"):
             self.assertIn(required.lower(), skill.lower())
 
+    def test_role_list_has_a_single_source_of_truth(self):
+        # role_bind derives its role maps from herdr_ledger.ROLE_ORDER. Guard the derivation so
+        # the two cannot drift, and check every declared role's skill is actually installed.
+        ledger_spec = importlib.util.spec_from_file_location(
+            "ledger_roles_under_test", ROOT / "skills" / "herdr-engineering-loop" / "scripts" / "herdr_ledger.py")
+        ledger = importlib.util.module_from_spec(ledger_spec)
+        ledger_spec.loader.exec_module(ledger)
+        bind_spec = importlib.util.spec_from_file_location("role_bind_roles_under_test", BIND)
+        bind = importlib.util.module_from_spec(bind_spec)
+        bind_spec.loader.exec_module(bind)
+        self.assertEqual(set(ledger.ROLE_ORDER), set(bind.SKILLS))
+        self.assertEqual(set(ledger.ROLE_ORDER), set(bind.KINDS))
+        for role in ledger.ROLE_ORDER:
+            with self.subTest(role=role):
+                self.assertEqual(bind.SKILLS[role], "herdr-" + role)
+                self.assertTrue((ROOT / "skills" / bind.SKILLS[role] / "SKILL.md").is_file())
+
     def test_herdr_mock_activation_uses_pinned_agent_names_and_prompts(self):
         self.assertEqual(self.bind().returncode, 0)
         if os.name == "nt":
