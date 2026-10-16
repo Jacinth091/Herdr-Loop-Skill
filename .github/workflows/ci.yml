@@ -10,6 +10,11 @@ permissions:
   contents: read
 
 jobs:
+  # The required status checks for protected `main` are named
+  # "Test & Validate (ubuntu-latest)" and "Test & Validate (windows-latest)".
+  # Required checks are matched by name, so this job's `name:` must not change and
+  # must not gain a `python-version` matrix dimension: renaming it would silently
+  # block every merge to main. Additional interpreters belong in `python-floor`.
   test:
     name: Test & Validate (${{ matrix.os }})
     strategy:
@@ -24,7 +29,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.13"
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -33,7 +38,7 @@ jobs:
 
       - name: Run Unit Test Suite
         run: |
-          python -m unittest tests/test_ledger_pilot.py tests/test_pack.py tests/test_access_probe.py tests/test_backend_transfer.py tests/test_live_sqlite_lifecycle.py tests/test_verification_guard.py tests/test_progress_view.py tests/test_package_and_update.py
+          python -m unittest tests/test_ledger_pilot.py tests/test_pack.py tests/test_access_probe.py tests/test_backend_transfer.py tests/test_sqlite_lifecycle.py tests/test_verification_guard.py tests/test_progress_view.py tests/test_package_and_update.py
 
       - name: Validate Cross-Platform Node Installer Dry-Run
         run: |
@@ -53,3 +58,26 @@ jobs:
       - name: Test Deterministic Packaging & Archive Validation
         run: |
           python tools/package.py --output-dir dist/ci-test
+
+  # Informational, not a required check: pins the interpreter floor that
+  # docs/MAINTAINING.md promises, so a regression below it fails visibly even
+  # though it cannot block a merge on its own.
+  python-floor:
+    name: Python Floor (${{ matrix.os }})
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python (documented floor)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Run Unit Test Suite On The Floor
+        run: |
+          python -m unittest tests/test_ledger_pilot.py tests/test_pack.py tests/test_access_probe.py tests/test_backend_transfer.py tests/test_sqlite_lifecycle.py tests/test_verification_guard.py tests/test_progress_view.py tests/test_package_and_update.py

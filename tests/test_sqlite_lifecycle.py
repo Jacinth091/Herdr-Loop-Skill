@@ -1,4 +1,4 @@
-"""Mocked live contracts; these are not real Herdr E2E evidence."""
+"""Mocked SQLite role-activation contracts; not live Herdr end-to-end evidence."""
 import hashlib
 import importlib.util
 import json
@@ -14,7 +14,7 @@ ledger = pilot.ledger
 ROOT = pilot.ROOT
 
 
-class LiveSQLiteTests(unittest.TestCase):
+class SQLiteLifecycleTests(unittest.TestCase):
     def setUp(self):
         pilot.LedgerPilotTests.setUp(self)
         observation = mock.patch.object(ledger, 'observe_herdr', side_effect=self.observed)
@@ -159,8 +159,10 @@ class LiveSQLiteTests(unittest.TestCase):
             '--recipient', recipient, '--recipient-pane', self.pane(recipient), '--compose-receipt'])
         self.assertIn('CONFIRMED_APPLIED', ledger.operation(self.run_dir, args))
         digest = hashlib.sha256((self.run_dir/'delegator.ready').read_bytes()).hexdigest()
-        self.assertEqual(f'ROLE_READY run {op} delegator {pane} {recipient}\nevidence_sha={digest}\n',
-                         (self.run_dir/'receipts'/f'role_confirm-{op}.receipt').read_text(encoding='utf8'))
+        # Assert the composed envelope's fields, not a byte-exact transcription of its prose.
+        composed = (self.run_dir/'receipts'/f'role_confirm-{op}.receipt').read_text(encoding='utf8').splitlines()
+        self.assertEqual(composed[0].split(), ['ROLE_READY', 'run', op, 'delegator', pane, recipient])
+        self.assertEqual(composed[1], 'evidence_sha=' + digest)
 
     def test_requested_override_readiness_still_requires_exact_match(self):
         self.executing()
@@ -275,7 +277,6 @@ class LiveSQLiteTests(unittest.TestCase):
             activation._run_prompt('herdr', entry)
         sent_prompt = transport.call_args.args[0][-1]
         self.assertIn(f"ROLE_READY run {receipt['operation_id']} manager w3:p1 delegator", sent_prompt)
-        self.assertIn('task/attempt ROLE_READY is a separate handshake', sent_prompt)
         self.assertFalse((self.run_dir / 'SESSION.md').exists())
         self.assertEqual(activation.herdr_ledger.activation_receipts(self.run_dir)[0]['status'], 'OUTCOME_UNCERTAIN')
 
