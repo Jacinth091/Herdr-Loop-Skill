@@ -60,25 +60,36 @@ When modifying any skill or script, you must preserve these architectural invari
 7. **Safe Cancellation & Recovery:**  
    Cancellation must stop future scheduling, observe actual process termination via Herdr CLI, and preserve dirty worktrees and human-owned panes.
 
+### Unproven Paths
+
+Passing tests prove the mocked contracts, never a live end-to-end path. [UNPROVEN.md](UNPROVEN.md) lists
+what is not demonstrated, gated, or blocked, and what would prove each. Do not present a listed path
+to a human operator as working, and update the file whenever a gate is cleared or a new gap is found.
+
 ---
 
 ## 3. Local Development & Testing
 
 ### Prerequisites
-- Python 3.10+ (Standard library only; no pip dependencies required for core tools).
+- Python 3.10+ (Standard library only; no pip dependencies required for core tools). CI runs 3.10 (the floor) and 3.13 (newest) on Linux and Windows.
 - Node.js 18+ (Optional, for `npm test` and `npx .`).
 - Windows PowerShell 5.1+ or POSIX shell (sh/bash).
 
 ### Running Tests
-Execute the full automated test suite:
+Execute the full automated test suite (the same set CI runs):
 
 ```bash
 # Using npm:
 npm test
 
 # Using Python directly:
-python -m unittest tests/test_ledger_pilot.py tests/test_pack.py tests/test_access_probe.py tests/test_backend_transfer.py tests/test_progress_view.py tests/test_package_and_update.py
+python -m unittest tests/test_ledger_pilot.py tests/test_pack.py tests/test_access_probe.py tests/test_backend_transfer.py tests/test_sqlite_lifecycle.py tests/test_verification_guard.py tests/test_progress_view.py tests/test_package_and_update.py
 ```
+
+`npm run test:ci` is the platform-independent CI mirror: the suite, the Node installer dry-run, and
+the deterministic packaging step. Packaging writes `dist/ci-test/`, which is git-ignored. The
+Windows PowerShell and POSIX shell installer dry-runs are platform-specific and stay in the
+workflow.
 
 ### Dry-Run Installer Checks
 Before committing installer changes, verify dry-run behavior on your platform:
@@ -94,11 +105,22 @@ node bin/install.js --dry-run
 sh ./install.sh --dry-run
 ```
 
+### Regenerating the Command Reference
+
+`skills/herdr-engineering-loop/references/command-reference.md` is generated from the ledger CLI parser and role maps, and a test fails if it drifts from them.
+
+```bash
+python tools/render_reference.py          # rewrite it (UTF-8, LF, no BOM)
+python tools/render_reference.py --check  # exit 1 when it is stale
+```
+
+Do not regenerate it by shell redirection: on Windows PowerShell `>` re-encodes the stream as UTF-16LE with CRLF and corrupts the file.
+
 ---
 
 ## 4. Versioning Policy
 
 - **Single Canonical Version:** The package version is declared in [manifest.json](../manifest.json) and mirrored in [package.json](../package.json).
 - **Commit Message Format:** Every commit subject is `type[module]: message`, where `type` is the kind of change (`feat`, `fix`, `docs`, `test`, `ci`, `chore`, `refactor`) and `module` is the area touched (e.g. `update`, `installer`, `ledger`, `release`, `delegator`). Examples: `fix[update]: compare installed version with latest release`, `docs[readme]: correct pane setup`. **Do not create pseudo-version bumps for routine commits.**
-- **Protected `main`:** Changes reach `main` only through a pull request with both CI checks (`Test & Validate (ubuntu-latest)` and `(windows-latest)`) passing; force-pushes and deletion are blocked. Only repository admins can create, move or delete `v*` release tags.
+- **Protected `main`:** Changes reach `main` only through a pull request with both CI checks (`Test & Validate (ubuntu-latest)` and `(windows-latest)`) passing; force-pushes and deletion are blocked. Required checks are matched by name, so do not rename the `test` job or give it a `python-version` matrix dimension — extra interpreters belong in the informational `Python Floor (…)` job. Only repository admins can create, move or delete `v*` release tags.
 - **Releases are Explicit:** Published releases are created only via annotated Git tags (`vX.Y.Z`) on reviewed commits. See [RELEASING.md](RELEASING.md) for full instructions.
