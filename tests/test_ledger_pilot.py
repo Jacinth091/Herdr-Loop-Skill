@@ -20,6 +20,12 @@ ledger = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ledger)
 REAL_OBSERVER = ledger.observe_herdr
 REAL_STOPPED = ledger.observe_stopped
+REAL_RECIPIENT = ledger.observe_recipient  # setUp replaces the module attribute with a Mock
+
+RENDERER = ROOT / 'tools' / 'render_reference.py'
+render_spec = importlib.util.spec_from_file_location('render_reference', RENDERER)
+render_reference = importlib.util.module_from_spec(render_spec)
+render_spec.loader.exec_module(render_reference)
 
 
 def _exited_pid():
@@ -440,6 +446,10 @@ class LedgerPilotTests(unittest.TestCase):
         committed = (ROOT / 'skills' / 'herdr-engineering-loop' / 'references' / 'command-reference.md').read_text(encoding='utf8')
         # Compare content, not checkout line endings: a fresh Windows clone rewrites LF to CRLF.
         self.assertEqual(ledger.command_reference().replace('\r\n', '\n'), committed.replace('\r\n', '\n'))
+        # The documented regeneration recipe must reproduce the committed artifact. Shell
+        # redirection cannot: Windows PowerShell emits UTF-16LE with CRLF.
+        self.assertEqual(render_reference.rendered_bytes().replace(b'\r\n', b'\n'),
+                         committed.encode('utf8').replace(b'\r\n', b'\n'))
         # A guarded REMAINDER positional must render as required on every interpreter:
         # argparse 3.13 changed its default to required=False, which would otherwise drift.
         self.assertIn('verify-exec ', committed)
@@ -492,6 +502,22 @@ class LedgerPilotTests(unittest.TestCase):
             '--checkout',str(self.worker),'--agent','worker_a1','--provider','opencode','--request-id','reserve-oc'))
         self.assertIn('provider must be', self.cmd('attempt-reserve','--task','T01','--attempt','T01-A2',
             '--checkout',str(self.worker),'--agent','worker_a1','--provider','gemini','--request-id','reserve-bad',ok=False))
+
+    def test_attempt_reserve_refuses_an_expectation_the_observer_cannot_read(self):
+        # attempt-attach derives model and effort from the agent's process arguments, so an
+        # expectation outside what that reads is refused at reserve rather than guaranteed to
+        # fail later with MODEL_OVERRIDE_NOT_APPLIED (see references/sqlite-live.md). Only Codex
+        # publishes an effort flag, so no other provider can ever confirm one.
+        self.init();self.task()
+        for provider in ('agy', 'claude'):
+            self.assertIn('only observable for Codex', self.cmd('attempt-reserve','--task','T01','--attempt','T01-A1',
+                '--checkout',str(self.worker),'--agent','worker_a1','--provider',provider,'--expected-effort','xhigh',
+                '--request-id','res-'+provider,ok=False))
+        # The refusal is scoped to the unconfirmable declaration: a provider that simply declares
+        # no expectation is still reserved, because a model the pack did not mandate for the role
+        # remains a legitimate reservation.
+        self.assertIn('state=RESERVED', self.cmd('attempt-reserve','--task','T01','--attempt','T01-A1',
+            '--checkout',str(self.worker),'--agent','worker_a1','--provider','claude','--request-id','res-claude'))
 
     def test_conflicting_checkout_claim_and_generation(self):
         self.init(parallel=True);self.task();self.task('T02',title='Independent second slice')
@@ -586,6 +612,77 @@ class LedgerPilotTests(unittest.TestCase):
         with mock.patch.object(ledger,'herdr_json',side_effect=[agent,process]):
             with self.assertRaisesRegex(ledger.LedgerError,'HERDR_IDENTITY_MISMATCH'):
                 REAL_OBSERVER('worker_a1','w3:p1',self.worker,'codex')
+
+    def test_observer_names_the_remedy_when_a_pane_agent_has_no_registered_name(self):
+        # Governance binds to a registered name, never to a bare pane, so an unnamed pane
+        # agent must be its own refusal carrying the remedy -- not a bare identity mismatch.
+        # The pane already hosts an agent, so the remedy is to name it, never to start
+        # another agent in an occupied pane.
+        agent={'agent':{'name':None,'pane_id':'w3:p1','cwd':str(self.worker),'terminal_id':'term-test'}}
+        process={'process_info':{'pane_id':'w3:p1','foreground_processes':[{'name':'codex.exe','pid':1234,
+            'cwd':str(self.worker),'argv':['codex.exe']}]}}
+        with mock.patch.object(ledger,'herdr_json',side_effect=[agent,process]):
+            with self.assertRaisesRegex(ledger.LedgerError,r'HERDR_AGENT_UNNAMED') as caught:
+                REAL_OBSERVER('worker_a1','w3:p1',self.worker,'codex')
+        remedy=str(caught.exception)
+        self.assertIn('herdr agent rename w3:p1 <agent-name>',remedy)
+        self.assertNotIn('herdr agent start',remedy)
+        with mock.patch.object(ledger,'herdr_json',side_effect=[agent]):
+            with self.assertRaisesRegex(ledger.LedgerError,r'HERDR_AGENT_UNNAMED') as caught:
+                REAL_RECIPIENT('worker_a1','w3:p1')
+        self.assertIn('herdr agent rename w3:p1 <agent-name>',str(caught.exception))
+        # Pane-only addressing (the name argument is itself the pane) must not compose a
+        # self-referential remedy such as `herdr agent rename w3:p1 w3:p1`.
+        with mock.patch.object(ledger,'herdr_json',side_effect=[agent,process]):
+            with self.assertRaisesRegex(ledger.LedgerError,r'HERDR_AGENT_UNNAMED') as caught:
+                REAL_OBSERVER('w3:p1','w3:p1',self.worker,'codex')
+        self.assertNotIn('rename w3:p1 w3:p1',str(caught.exception))
+
+    def test_herdr_cli_domain_error_is_not_reported_as_a_transport_failure(self):
+        # Herdr writes its error object to stderr, so reading only stdout reported an ordinary
+        # `agent_not_found` as an unreachable transport and truncated the reason at 100 chars.
+        failed = subprocess.CompletedProcess(args=['herdr'], returncode=1, stdout='',
+            stderr='{"error":{"code":"agent_not_found","message":"agent target ghost not found"}}')
+        env = mock.patch.dict(os.environ, {'HERDR_ENV': '1'})
+        env.start(); self.addCleanup(env.stop)
+        with mock.patch.object(ledger.shutil, 'which', return_value='herdr'), \
+                mock.patch.object(ledger.subprocess, 'run', return_value=failed):
+            with self.assertRaises(ledger.HerdrCliError) as caught:
+                ledger.herdr_json('agent','get','ghost')
+        self.assertEqual('agent_not_found', caught.exception.code)
+        self.assertIn('agent target ghost not found', str(caught.exception))
+        self.assertNotIn('TRANSPORT_UNAVAILABLE', str(caught.exception))
+        # A failure that carries no structured error is still a transport failure.
+        refused = subprocess.CompletedProcess(args=['herdr'], returncode=1, stdout='', stderr='connection refused')
+        with mock.patch.object(ledger.shutil, 'which', return_value='herdr'), \
+                mock.patch.object(ledger.subprocess, 'run', return_value=refused):
+            with self.assertRaisesRegex(ledger.LedgerError, 'HERDR_TRANSPORT_UNAVAILABLE'):
+                ledger.herdr_json('agent','get','ghost')
+
+    def test_observer_reports_a_name_that_vanished_while_its_pane_is_still_live(self):
+        # Herdr clears an agent name when that agent exits, is released, or is replaced, while
+        # the pane keeps hosting it; the refusal must then say "re-name it", not "start it".
+        gone = ledger.HerdrCliError('BLOCKED: HERDR_ERROR: agent target ghost not found', 'agent_not_found')
+        process = {'process_info': {'pane_id': 'w3:p1', 'foreground_processes': [{'name': 'codex.exe',
+            'pid': 1234, 'cwd': str(self.worker), 'argv': ['codex.exe']}]}}
+        with mock.patch.object(ledger,'herdr_json',side_effect=[gone,process]):
+            with self.assertRaisesRegex(ledger.LedgerError,r'HERDR_AGENT_UNNAMED') as caught:
+                REAL_OBSERVER('ghost','w3:p1',self.worker,'codex')
+        self.assertIn('herdr agent rename w3:p1 ghost',str(caught.exception))
+
+    def test_observer_reports_a_missing_agent_when_its_pane_is_gone(self):
+        # The same absent name is NOT a naming problem when nothing occupies the pane.
+        gone = ledger.HerdrCliError('BLOCKED: HERDR_ERROR: agent target ghost not found', 'agent_not_found')
+        no_pane = ledger.HerdrCliError('BLOCKED: HERDR_ERROR: pane w3:p9 not found', 'pane_not_found')
+        with mock.patch.object(ledger,'herdr_json',side_effect=[gone,no_pane]):
+            with self.assertRaisesRegex(ledger.LedgerError,r'HERDR_ERROR') as caught:
+                REAL_OBSERVER('ghost','w3:p9',self.worker,'codex')
+        self.assertNotIn('HERDR_AGENT_UNNAMED',str(caught.exception))
+        self.assertIn('herdr agent start ghost',str(caught.exception))
+        with mock.patch.object(ledger,'herdr_json',side_effect=[gone,no_pane]):
+            with self.assertRaisesRegex(ledger.LedgerError,r'HERDR_ERROR') as caught:
+                REAL_RECIPIENT('ghost','w3:p9')
+        self.assertNotIn('HERDR_AGENT_UNNAMED',str(caught.exception))
 
     def test_observer_cannot_read_opencode_model_or_effort_from_arguments(self):
         # OpenCode's argv carries no -m/--model or -c model_reasoning_effort=, so governed

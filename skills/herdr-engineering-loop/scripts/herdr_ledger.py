@@ -75,6 +75,14 @@ class LedgerError(Exception):
     pass
 
 
+class HerdrCliError(LedgerError):
+    """A domain error the Herdr CLI returned, as distinct from an unreachable transport."""
+
+    def __init__(self, message, code=""):
+        super().__init__(message)
+        self.code = code
+
+
 def fail(message):
     raise LedgerError(message)
 
@@ -226,6 +234,23 @@ def upgrade(root):
             return f"OK schema={VERSION} backup={backup.name}"
 
 
+def herdr_cli_error(result):
+    """The CLI's structured error, which it may write to either stream.
+
+    Reading only stdout reports an ordinary result such as `agent_not_found` as an unreachable
+    transport and truncates the reason at 100 characters. Parse both streams so the caller can
+    classify the outcome and act on `code`.
+    """
+    for stream in (result.stdout, result.stderr):
+        try:
+            error = json.loads(stream or "").get("error")
+        except (ValueError, AttributeError):
+            continue
+        if isinstance(error, dict):
+            return error
+    return None
+
+
 def herdr_json(*argv):
     if os.environ.get("HERDR_ENV") != "1":
         fail("BLOCKED: HERDR_CONTEXT_UNAVAILABLE")
@@ -236,12 +261,11 @@ def herdr_json(*argv):
     except (OSError, subprocess.TimeoutExpired) as exc:
         fail("BLOCKED: HERDR_TRANSPORT_UNAVAILABLE: " + type(exc).__name__)
     if result.returncode:
-        try:
-            err = json.loads(result.stdout).get("error", {})
-            if "message" in err:
-                fail("BLOCKED: HERDR_ERROR: " + err["message"])
-        except (ValueError, KeyError, TypeError):
-            pass
+        error = herdr_cli_error(result)
+        if error is not None:
+            raise HerdrCliError(
+                "BLOCKED: HERDR_ERROR: " + (error.get("message") or error.get("code") or "unknown"),
+                error.get("code", ""))
         fail("BLOCKED: HERDR_TRANSPORT_UNAVAILABLE: " + (result.stderr.strip() or result.stdout.strip())[:100])
     try:
         return json.loads(result.stdout)["result"]
@@ -249,10 +273,55 @@ def herdr_json(*argv):
         fail("BLOCKED: HERDR_RESPONSE_INVALID")
 
 
+def unregistered_agent_refusal(name, pane, provider=None, checkout=None):
+    """Refuse a name Herdr no longer resolves, distinguishing the two situations behind it.
+
+    Herdr clears an agent's name when that agent exits, is released, or is replaced, so an
+    expected name can vanish while its pane still hosts the live agent. Probing the pane is what
+    separates "it lost its name, re-name it" from "nothing is there, start it".
+    """
+    process = None
+    try:
+        process = herdr_json("pane", "process-info", "--pane", pane)["process_info"]
+    except LedgerError:
+        pass
+    processes = (process or {}).get("foreground_processes", [])
+    live = [p for p in processes
+            if provider and checkout and p.get("name", "").lower().startswith(provider)
+            and Path(p.get("cwd", "")).resolve() == Path(checkout).resolve()]
+    if len(live) == 1:
+        fail("BLOCKED: HERDR_AGENT_UNNAMED: pane "
+             f"{pane} still hosts a live {provider} agent at {checkout}, but no agent is "
+             f"registered under the name {name!r}; Herdr clears a name when its agent exits, is "
+             f"released, or is replaced, so re-name the live occupant with "
+             f"`herdr agent rename {pane} {name}`")
+    occupancy = ("still hosts a live process" if processes else
+                 "hosts no live process" if process is not None and process.get("pane_id") == pane else
+                 "could not be read")
+    fail(f"BLOCKED: HERDR_ERROR: no agent is registered under the name {name!r}, and pane {pane} "
+         f"{occupancy}; if a live agent already occupies that pane, name it with "
+         f"`herdr agent rename {pane} {name}`, otherwise start one with "
+         f"`herdr agent start {name} --kind <kind> --pane <idle-shell-pane>`")
+
+
 def observe_herdr(name, pane, checkout, provider):
     """Read installed Herdr state before the SQLite write transaction."""
-    agent = herdr_json("agent", "get", name)["agent"]
+    try:
+        agent = herdr_json("agent", "get", name)["agent"]
+    except HerdrCliError as exc:
+        if exc.code != "agent_not_found":
+            raise
+        unregistered_agent_refusal(name, pane, provider, checkout)
     process = herdr_json("pane", "process-info", "--pane", pane)["process_info"]
+    if not agent.get("name"):
+        # Governance binds to a registered agent name, never to a bare pane. The pane already
+        # hosts an agent, so the remedy is to name that agent -- not to start another one --
+        # and not to echo back whatever was passed (which may itself be a pane id).
+        fail("BLOCKED: HERDR_AGENT_UNNAMED: the agent in pane "
+             f"{agent.get('pane_id') or pane} has no registered name, and the ledger binds to a "
+             f"name rather than a pane; name it with `herdr agent rename "
+             f"{agent.get('pane_id') or pane} <agent-name>`, then pass that same <agent-name> "
+             f"instead of {name!r}")
     if (agent.get("name") != name or agent.get("pane_id") != pane or
             Path(agent.get("cwd", "")).resolve() != Path(checkout).resolve() or
             process.get("pane_id") != pane):
@@ -338,7 +407,18 @@ def reobserve_attempt(a):
 
 
 def observe_recipient(name, pane):
-    agent=herdr_json("agent","get",name)["agent"]
+    try:
+        agent=herdr_json("agent","get",name)["agent"]
+    except HerdrCliError as exc:
+        if exc.code != "agent_not_found":
+            raise
+        unregistered_agent_refusal(name, pane)
+    if not agent.get("name"):
+        fail("BLOCKED: HERDR_AGENT_UNNAMED: the signal recipient in pane "
+             f"{agent.get('pane_id') or pane} has no registered name, and the ledger binds to a "
+             f"name rather than a pane; name it with `herdr agent rename "
+             f"{agent.get('pane_id') or pane} <agent-name>`, then pass that same <agent-name> "
+             f"instead of {name!r}")
     if agent.get("name")!=name or agent.get("pane_id")!=pane:
         fail("BLOCKED: SIGNAL_RECIPIENT_MISMATCH")
 
@@ -730,6 +810,13 @@ def status_human(run, tasks, ids=False):
 
 
 ROLE_ORDER = ("manager", "delegator", "lead", "worker", "verifier", "critic")
+# What attempt-attach can confirm from the agent's process arguments (see
+# references/sqlite-live.md): only Codex publishes an effort flag (-c model_reasoning_effort=).
+# Reserving an expectation the observer can never read would only block the attach later with
+# MODEL_OVERRIDE_NOT_APPLIED, so reserve refuses it up front. This refuses an unconfirmable
+# declaration; it deliberately does not mandate one, because a model the pack did not choose for
+# the role is still a legitimate reservation.
+OBSERVABLE_EFFORT = {"codex"}
 READ_ONLY_COMMANDS = ("events", "export", "next", "packet", "recover", "status", "task-show")
 
 
@@ -775,7 +862,7 @@ def command_reference(role=None):
         if role not in ROLE_ORDER:
             fail("unknown role")
         lines = [f"# Ledger command reference for role={role} (generated)", "",
-                 "Generated from the ledger CLI. Do not hand-edit; regenerate with",
+                 "Generated from the ledger CLI. Do not hand-edit; print this role's list with",
                  f"`python herdr_ledger.py --run-dir <any> reference --role {role}`.", "",
                  "## Commands this role may run", ""]
         for name in role_operations(role):
@@ -784,7 +871,8 @@ def command_reference(role=None):
         return "\n".join(lines)
     lines = ["# Ledger command reference (generated)", "",
              "Generated from the ledger CLI itself (its parser and role maps). Do not hand-edit this file:",
-             "regenerate it with `python herdr_ledger.py --run-dir <any> reference`.", "",
+             "regenerate it with `python tools/render_reference.py`. Never regenerate it by shell",
+             "redirection; Windows PowerShell re-encodes the stream as UTF-16LE and corrupts the file.", "",
              "Read one role's list with `reference --role <role>`.", "",
              "## Role command lists", ""]
     for role_name in ROLE_ORDER:
@@ -1156,6 +1244,8 @@ def _operation(root, args):
                     fail("provider must be codex, claude, agy or opencode")
                 if args.provider=="codex" and (not args.expected_model or args.expected_effort not in ("xhigh", "max")):
                     fail("Codex worker must declare expected model and xhigh/max effort")
+                if args.expected_effort and args.provider not in OBSERVABLE_EFFORT:
+                    fail(f"--expected-effort is only observable for Codex (-c model_reasoning_effort=); omit it for {args.provider} rather than reserve an expectation attempt-attach can never confirm")
                 run=guarded(conn,root)
                 if not ready(conn,args.task):fail("task not ready")
                 running=one(conn,"SELECT COUNT(*) AS n FROM attempt WHERE state IN ('RESERVED','OBSERVED','READY','STARTED','UNCERTAIN','BLOCKED')")["n"]

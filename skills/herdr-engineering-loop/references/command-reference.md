@@ -1,7 +1,8 @@
 # Ledger command reference (generated)
 
 Generated from the ledger CLI itself (its parser and role maps). Do not hand-edit this file:
-regenerate it with `python herdr_ledger.py --run-dir <any> reference`.
+regenerate it with `python tools/render_reference.py`. Never regenerate it by shell
+redirection; Windows PowerShell re-encodes the stream as UTF-16LE and corrupts the file.
 
 Read one role's list with `reference --role <role>`.
 

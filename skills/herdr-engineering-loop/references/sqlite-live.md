@@ -62,7 +62,7 @@ This changes only who writes the envelope. The substantive artifact stays yours 
 
 - Codex exposes model and effort; Claude exposes a model.
 - Agy and OpenCode expose neither unless the launch passes an explicit `--model`; observed values are then empty.
-- Reserve an OpenCode attempt **without** `--expected-model`/`--expected-effort`. A reserved expectation that cannot be observed blocks `attempt-attach` with `MODEL_OVERRIDE_NOT_APPLIED`.
+- `attempt-reserve` refuses an expectation the observer can never read: `--expected-effort` is rejected for every provider other than Codex (only Codex publishes `-c model_reasoning_effort=`), so that failure now lands at reserve instead of at attach. Declaring no expectation stays valid — the refusal covers only the unconfirmable declaration, and a model the ledger does not mandate for a role remains a legitimate reservation.
 - READY evidence must still carry `observed_model=` and `observed_effort=` lines. Empty values are accepted; missing lines are not.
 
 Governed OpenCode roles are therefore observed for identity but not for model selection.

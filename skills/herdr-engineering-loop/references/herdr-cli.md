@@ -33,7 +33,7 @@ herdr agent get delegator
 herdr agent read delegator --source recent-unwrapped --lines 100
 ```
 
-Swap Claude/Codex roles when selected by the user. Manually started agents can be named after detection using `herdr agent rename <pane-id> <unique-name>`. `agent start` requires an idle shell pane and does not create the pane. Use lower-case unique agent names matching Herdr's name rules; do not start a second agent in an occupied pane.
+Swap Claude/Codex roles when selected by the user. Manually started agents can be named after detection using `herdr agent rename <pane-id> <unique-name>`. `agent start` requires an idle shell pane and does not create the pane. Use lower-case unique agent names matching Herdr's name rules; do not start a second agent in an occupied pane. Governed roles must resolve to a registered name, never a bare pane: addressing an agent by pane id, or one whose name was never set, is refused as `HERDR_AGENT_UNNAMED`, and the fix is `herdr agent rename <pane-id> <unique-name>` followed by passing that same name. `herdr agent list` does not report names, so confirm one with `herdr agent get <unique-name>`. Herdr's installed CLI states that it clears a name when that agent exits, is released, or is replaced, so a name registered earlier can be gone while its pane still hosts the agent; the ledger then probes the pane and reports `HERDR_AGENT_UNNAMED` with the re-name fix when the agent is still live, and a plain `HERDR_ERROR` with a start command when the pane is gone — a cleared name is never reported as an unreachable transport.
 
 ## Worktree worker lifecycle
 
