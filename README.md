@@ -1,6 +1,6 @@
 # Herdr Loop Skill
 
-A structured, role-based workflow for coordinating autonomous coding agents (Claude Code, Codex, and Agy CLI) in [Herdr](https://herdr.dev).
+A structured, role-based workflow for coordinating autonomous coding agents (Claude Code, Codex, Agy CLI and OpenCode) in [Herdr](https://herdr.dev).
 
 Rather than relying on one unbounded mega-prompt or a complex external daemon, Herdr Loop Skill equips agents with **bounded, specialized role skills**. Agents collaborate inside their own Herdr workspaces and panes using isolated Git worktrees, sequential test gates, and explicit handoffs.
 
@@ -49,8 +49,7 @@ The skill operates entirely through local Markdown packets, Git commits, and sta
 - Anyone needing auditable provenance: knowing exactly which agent wrote what commit, what tests ran at what SHA, and what the human authorized.
 
 ### When NOT to use it:
-- **Trivial single-file changes:** If you just need a one-line bugfix, an ordinary single-agent prompt is faster.
-- **No Herdr session:** The skill coordinates agents through Herdr panes and workspaces (`HERDR_ENV=1`); it does not manage processes outside Herdr.
+- **No Herdr session:** Governed multi-agent runs need Herdr panes and workspaces (`HERDR_ENV=1`). A directly assigned Standalone Worker task can run in an existing CLI and checkout without Herdr; Herdr is needed only if you ask it to start/register that Worker or perform another Herdr operation.
 - **Unattended auto-deployment:** The skill requires human authorization for execution grants, privileged resources, and final promotions; it will never automatically push to production or merge PRs.
 
 ---
@@ -62,35 +61,36 @@ The skill operates entirely through local Markdown packets, Git commits, and sta
 | **Manager** | `herdr-manager` | Architectural lead; approves `PLAN.md`, defines human-facing task titles, renders final acceptance verdicts. | Never writes implementation code, dispatches workers, or runs tests. |
 | **Delegator** | `herdr-delegator` | Dispatcher & integrator; provisions worktrees, briefs workers, reviews commits, integrates code, manages serial test lock. | Never invents architectural requirements or bypasses test gates. |
 | **Lead** | `herdr-lead` | Budget option: one agent does both the Manager and Delegator jobs (plan, dispatch, integrate, verify). Builds on `herdr-manager` + `herdr-delegator`. | Never implements or acts as Worker/Verifier/Critic. You approve the plan before any worker starts and give final acceptance. |
-| **Worker** | `herdr-worker` | Task implementer; implements exactly one slice in an isolated Git worktree; writes source code and `REPORT.md`. | **Strictly forbidden** from running tests, builds, linters, typechecks, or package installs. |
+| **Worker** | `herdr-worker` | Implements one governed slice or a directly assigned standalone task. | Governed Workers never run tests/builds/installs; standalone Workers may run bounded, authorized self-checks and must label them self-verification. |
 | **Verifier** | `herdr-verifier` | Independent tester; runs approved sequential checks against the frozen integration SHA under a run-wide lock. | **Strictly forbidden** from editing application or test source files. |
 | **Critic** | `herdr-critic` | Read-only reviewer; inspects plan briefs and candidate Git diffs against architectural intent; reports findings. | Read-only. Never tests, runs code, or edits files. |
 | **Controller** | `herdr-engineering-loop` | Setup & bootstrap entrypoint; provisions topology, binds role packets, coordinates recovery. | Orchestration entrypoint; not a day-to-day engineering persona. |
 
 > [!NOTE]
-> Provider and model names (Claude, Codex, Agy) are interchangeable recommendations based on capability, not fixed identities. Roles are assigned dynamically per run via `roles.json`.
+> Provider and model names (Claude, Codex, Agy, OpenCode) are interchangeable recommendations based on capability, not fixed identities. Roles are assigned dynamically per run via `roles.json`.
 
 ---
 
 ## 4. Requirements and Safety Prerequisites
 
-1. **Herdr:** Installed and running. Live operations require an active session where `HERDR_ENV=1`.
+1. **Herdr:** Installed and running for governed operations and any task that starts or controls Herdr agents. Direct standalone work in an already-running CLI does not require Herdr.
 2. **Coding Agent CLIs:** At least one supported CLI installed and authenticated:
    - Claude Code (`claude`)
    - Codex CLI (`codex`)
    - Agy CLI (`agy`)
+   - OpenCode (`opencode`)
 3. **Git:** Repository must have clean Git worktree support.
-4. **Permissions:** The skill runs under user permissions. **It never requires Administrator/root privileges and will never request sudo or disable sandboxes.**
+4. **Permissions:** The skill uses the active CLI's normal permission flow. For an authorized in-scope command, an agent may request approval through its own native tool when available and must wait for the real decision. It never requires Administrator/root privileges, changes ACLs/policies, or disables sandboxes.
 
 ---
 
 ## 5. Install in One Minute
 
-The installer places the skills into your user-level agent configuration folders (`~/.claude/skills`, `~/.agents/skills`, `~/.gemini/antigravity-cli/skills`).
+The installer places the skills into your user-level agent configuration folders (`~/.claude/skills`, `~/.agents/skills`, `~/.gemini/antigravity-cli/skills`, `~/.config/opencode/skills`).
 
 ### Let Your AI Install It
 
-Paste this into the AI coding CLI you want to use (Claude Code, Codex, Agy or any other CLI that loads `SKILL.md` skills):
+Paste this into the AI coding CLI you want to use (Claude Code, Codex, Agy, OpenCode or any other CLI that loads `SKILL.md` skills):
 
 ```text
 Install Herdr Loop Skill for yourself by following
@@ -120,6 +120,7 @@ That's it: `npx` fetches the pack from GitHub and runs the installer. It backs u
 | Try the latest unreleased `main` | `npx github:Jacinth091/Herdr-Loop-Skill --force` |
 | Install for Claude Code only | `npx github:Jacinth091/Herdr-Loop-Skill#v2.8.1 --agents claude` |
 | Install for Claude Code and Codex only | `npx github:Jacinth091/Herdr-Loop-Skill#v2.8.1 --agents claude,codex` |
+| Install for OpenCode only | `npx github:Jacinth091/Herdr-Loop-Skill#v2.8.1 --agents opencode` |
 | Claude as Manager + Critic | `npx github:Jacinth091/Herdr-Loop-Skill#v2.8.1 --agents claude --roles controller,manager,critic` |
 | Codex as Delegator | `npx github:Jacinth091/Herdr-Loop-Skill#v2.8.1 --agents codex --roles controller,delegator` |
 | One agent as Manager + Delegator (Lead), to save cost | `npx github:Jacinth091/Herdr-Loop-Skill#v2.8.1 --agents claude --roles controller,lead` |
@@ -130,7 +131,7 @@ That's it: `npx` fetches the pack from GitHub and runs the installer. It backs u
 | Remove it from one agent only | `npx github:Jacinth091/Herdr-Loop-Skill --uninstall --agents agy` |
 | See all options | `npx github:Jacinth091/Herdr-Loop-Skill --help` |
 
-- **Agents:** `claude`, `codex`, `agy`, or `all` (the default).
+- **Agents:** `claude`, `codex`, `agy`, `opencode`, or `all` (the default).
 - **Roles:** `controller` (the `herdr-engineering-loop` session skill), `manager`, `delegator`, `lead` (also installs `manager` and `delegator`, which it builds on), `worker`, `verifier`, `critic`, or `all` (the default). Keep `controller` in any role subset: it is the skill that sets up and coordinates the run.
 - **Flags combine freely**, e.g. `--agents claude --roles controller,manager --dry-run`.
 - **Pinning:** `#v2.8.1` installs exactly that published release. Leave it off to get whatever is on `main` right now. Replace it with a newer tag (see [Releases](https://github.com/Jacinth091/Herdr-Loop-Skill/releases)) to upgrade.
@@ -141,7 +142,7 @@ That's it: `npx` fetches the pack from GitHub and runs the installer. It backs u
 # Preview actions without writing:
 npx . --dry-run
 
-# Install for Claude Code, Codex, and Agy CLI:
+# Install for Claude Code, Codex, Agy CLI, and OpenCode:
 npx .
 
 # Force refresh existing installed copies:
@@ -173,6 +174,20 @@ sh ./install.sh
 
 Here is a worked walkthrough for a single-task run (e.g. adding token expiry handling):
 
+### Standalone Worker task (no managed run)
+
+For a direct assignment to an already-running CLI, give it the `herdr-worker` skill and the task. It can work in the authorized checkout without a Manager, Delegator, Herdr registration, role packet, `SESSION.md`, SQLite, or readiness handshake. It must preserve unrelated dirty changes, stop if edits overlap ambiguously, and label any authorized checks as self-verification.
+
+To prepare a single Worker packet for a Herdr-launched CLI, use [`examples/roles.standalone-worker.json`](examples/roles.standalone-worker.json):
+
+```powershell
+py -3 .\tools\role_bind.py --config .\examples\roles.standalone-worker.json --repo "C:\path\to\your\repo"
+```
+
+This creates a standalone prompt packet and does not start an agent or create `SESSION.md`/SQLite state. Start one agent only if the task needs Herdr, then paste the generated prompt from `.herdr-loop/standalone-example/ACTIVATE.md` into that assigned CLI.
+
+### Governed Herdr run
+
 ### Step 1: Open Herdr and Assign Panes
 Inspect available panes:
 ```bash
@@ -183,6 +198,8 @@ Start your Manager and Delegator agents in empty panes (specifying your actual p
 herdr agent start manager --kind claude --pane <pane-id-1>
 herdr agent start delegator --kind codex --pane <pane-id-2>
 ```
+
+Before a Herdr-dependent change, confirm the real `HERDR_ENV`, named agent and pane. Use `tools/access_probe.py` for bounded origin/transport checks; its approval capability is always `unverified` because it cannot inspect the active CLI approval UI. Check the current CLI's actual native permission path separately. The pack honors existing Codex approval/reviewer settings but never enables them; configured **Approve for me** may consume model quota. Antigravity's Windows controls differ from its macOS/Linux controls.
 
 ### Step 2: Configure the Run Roster
 Create a run configuration file `roles.json`:
@@ -216,6 +233,8 @@ Generate isolated role instructions for the default Markdown engine:
 ```powershell
 py -3 .\tools\role_bind.py --config .\roles.json --repo "C:\path\to\your\repo"
 ```
+
+An explicit `"state_backend": "sqlite"` creates a `PLANNING` database. SQLite activation records observed setup and correlated role acknowledgments; typed execution still requires approved plan evidence and a separate human grant. Follow [SQLite role procedure](skills/herdr-engineering-loop/references/sqlite-live.md). Markdown remains the default while real Windows lifecycle validation is pending. Existing runs retain their selected backend. Transfer supports pristine planning and validated structured checkpoints, including released reservations whose agent was never started. Launched worker history, active claims, uncertain checks/signals, changed evidence, and edited checkpoint text require reconciliation. A human approval file bound to the dry-run fingerprint and journaled recovery remain mandatory.
 
 ### Step 4: Dispatch Work & Track Progress
 1. **Manager Approval:** The Manager drafts `PLAN.md`. Once accepted by the human, the Delegator creates `tasks/T01.md`.
@@ -258,21 +277,21 @@ Agents coordinate through explicit handoff envelopes sent as Herdr prompt hints:
 ### Strict Spawning Rules:
 - **No Codex Subagents:** Never use Codex's native `spawn_agent`, agent teams, or background child threads. All agents must exist in genuine Herdr panes.
 - **Cross-Model Launch Routing:** A Codex Delegator cannot launch a model-overridden Codex CLI worker directly. When this combination is needed, a **Claude Manager** performs the launch step via a `SPAWN-REQUEST.md` receipt.
-- **Agy Sandbox Flags:** When launching Agy with `--sandbox --dangerously-skip-permissions`, verify that directory isolation is effective and no machine secrets are accessible.
+- **Agy Permissions:** For native approval checks, keep normal permission prompts. For a human-selected unattended run in a task-specific disposable worktree, use `--sandbox --dangerously-skip-permissions` and confirm the sandbox starts successfully. This mode auto-approves tool calls and does not prove native approval. Stop on sandbox failure; never retry without the sandbox or use this mode to recover from a denial.
 
 ---
 
 ## 9. Concurrency and Verification
 
 - **Default 1 Worker:** To keep RAM usage safe on 8 GB–16 GB laptops, runs default to one active worker. Up to 3 independent workers may run only after explicit human approval.
-- **Worker Test-Execution Ban:** Workers never run test suites or builds. This prevents context window waste from repeated test failures and protects machine memory.
-- **Serial Heavy Test Lock:** In offline SQLite pilot runs, at most **one** memory-heavy local test process (pytest, npm test, docker build) holds the `heavy-local-verification` lock within the run database. In standard Markdown sessions, operators must serialize test executions across tasks. Across independent runs, operators must avoid concurrent heavy workloads.
+- **Worker Test-Execution Boundary:** Governed Workers never run tests or builds. Standalone Workers may run bounded, authorized self-checks and must report them as self-verification, not independent verification.
+- **Serial Heavy Test Lock:** SQLite pilot checks use both a per-run claim and an exclusive machine lock for one memory-heavy local test process. In standard Markdown sessions, operators serialize test executions manually.
 
 ---
 
 ## 10. Handling Blockers and Restarting
 
-- **`Access is denied` Triage:** Never auto-elevate to Administrator or disable sandboxes. Diagnose whether the block is a Herdr socket error, Docker Desktop named-pipe restriction, or worktree permissions using `tools/access_probe.py`.
+- **`Access is denied` Triage:** Classify the exact boundary with `tools/access_probe.py` when a Herdr operation needs it. For the same authorized in-scope command, request permission through the active CLI's own tool only when that tool offers a native approval path; wait for the decision and verify the result. The role pack does not change Codex approval settings or enable auto-review. If already configured, Codex `Approve for me` is honored by its own reviewer and may use model quota. Agy Windows permissions differ from macOS/Linux. Never self-grant, route around a deny, elevate, edit ACLs, or disable a sandbox.
 - **Closed or Stalled Panes:** For standard runs, inspect Herdr panes (`herdr pane list`) and reconcile `SESSION.md`. For offline SQLite pilot runs, run diagnostic recovery:
   ```powershell
   python skills/herdr-engineering-loop/scripts/herdr_ledger.py --run-dir <path-to-run-dir> recover
@@ -334,7 +353,7 @@ npx . --uninstall
 | **Role-Based Multi-Agent Workflow** | **Stable / Supported** | Manager, Delegator, Worker, Verifier, Critic, Controller. |
 | **Lead Mode (Manager + Delegator in one agent)** | **New in 2.8.1** | `agents.lead` in `roles.json` (see `examples/roles.lead.json`); human approves the plan and gives final acceptance. |
 | **Standard Markdown Ledger (`SESSION.md`)** | **Stable / Default** | Human-readable, transparent, zero-dependency. Active runtime authority. |
-| **Transactional SQLite Ledger** | **Offline Pilot Only** | Offline CLI pilot for evaluation only; not live-bindable (`role_bind.py` explicitly refuses `state_backend: "sqlite"`). |
+| **Transactional SQLite Ledger** | **Explicit opt-in; default promotion gated** | Typed role activation and lifecycle, structured quiescent transfer, and shared machine verification guard are implemented. Real Windows E2E evidence remains required. |
 | **Zero-Dependency Installers** | **Supported** | `npx .`, PowerShell (`install.ps1`), and POSIX shell (`install.sh`). |
 | **Safe Updater & Rollback** | **Supported** | `tools/update.py` with backup, mandatory checksum checks, and rollback. |
 | **Native Herdr Signals Transport** | *Future Proposal* | Current release uses Herdr `agent prompt` hints; documents remain truth. |

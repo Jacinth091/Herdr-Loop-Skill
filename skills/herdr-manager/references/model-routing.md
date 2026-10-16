@@ -10,7 +10,7 @@ A model **preference** is not evidence that the model was selected. Check your l
 | Implementation worker (Claude) | `claude` | `claude-haiku-5-5` | CLI default | Lighter scoped code changes, no tests |
 | Dedicated tester / Verifier (Claude) | `claude` | `claude-haiku-5-5` | CLI default | Execute approved serial verification at exact integration SHA; no code edits |
 | Critic (Claude) | `claude` | `claude-sonnet-5-5` | CLI default | Read-only plan/diff critique, no tests |
-| Implementation worker (Agy) | `agy` | Existing supported local model | As locally configured | Scoped code changes in sandbox, no tests |
+| Implementation worker (Agy) | `agy` | Existing supported local model | As locally configured | Governed: scoped sandboxed code changes, no tests; standalone self-checks follow `herdr-worker` |
 
 A Claude Haiku agent may be an **implementation Worker** or a **dedicated tester (Verifier)**, never both in the same assignment. The optional tester is a separately registered Herdr agent in its own pane, receives `ROLE_READY`, then `VERIFY_START` with the exclusive lock, and writes `VERIFY_READY` evidence. The Delegator can handle a trivial approved test without spawning a Verifier. This is not a separate `herdr-tester` skill: reuse `herdr-verifier`. The Sonnet Critic remains read-only and cannot run tests.
 

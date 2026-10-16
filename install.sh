@@ -14,7 +14,7 @@ SKILLS="herdr-engineering-loop herdr-manager herdr-delegator herdr-lead herdr-wo
 usage() {
   cat <<'USAGE'
 Install independent Herdr roles into user-level agent skill folders.
-Usage: sh install.sh [--agents claude,codex,agy|all] [--roles manager,delegator,lead,worker,verifier,critic,controller|all] [--force] [--dry-run] [--uninstall] [--with-herdr]
+Usage: sh install.sh [--agents claude,codex,agy,opencode|all] [--roles manager,delegator,lead,worker,verifier,critic,controller|all] [--force] [--dry-run] [--uninstall] [--with-herdr]
   --agents      Agent CLIs receiving skills (default: all)
   --roles       Role skills to install (default: all)
   --force       Update already pack-managed skills; refuse foreign folders
@@ -63,10 +63,10 @@ expand_roles() {
 }
 
 case "$AGENTS" in
-  all) selected_agents='claude codex agy' ;;
+  all) selected_agents='claude codex agy opencode' ;;
   *) selected_agents=$(printf '%s' "$AGENTS" | tr ',' ' ')
     for a in $selected_agents; do
-      case "$a" in claude|codex|agy) : ;; *) echo "Unknown agent: $a" >&2; exit 2 ;; esac
+      case "$a" in claude|codex|agy|opencode) : ;; *) echo "Unknown agent: $a" >&2; exit 2 ;; esac
     done ;;
 esac
 roles_selected=$(expand_roles)
@@ -114,6 +114,7 @@ for agent in $selected_agents; do
     claude) base="$HOME/.claude/skills" ;;
     codex) base="$HOME/.agents/skills" ;;
     agy) base="$HOME/.gemini/antigravity-cli/skills" ;;
+    opencode) base="$HOME/.config/opencode/skills" ;;
   esac
   for skill in $roles_selected; do
     install_one "$base" "$skill" "$ROOT/skills/$skill"

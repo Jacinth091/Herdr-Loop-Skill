@@ -1,6 +1,6 @@
 ---
 name: herdr-engineering-loop
-description: Bootstrap, coordinate, inspect, and recover human-directed multi-agent engineering workflows inside Herdr. Use for session setup, workspace provisioning, role packet binding (Manager, Delegator, Worker, Verifier, Critic), dual-backend state management (Markdown live authority or ACID SQLite offline pilot), serial verification locks, model launch routing, and fail-closed crash recovery.
+description: Bootstrap, coordinate, inspect, and recover human-directed multi-agent engineering workflows inside Herdr. Use for session setup, workspace provisioning, role packet binding (Manager, Delegator, Worker, Verifier, Critic), Markdown state or an explicit SQLite run, serial verification locks, model launch routing, and fail-closed crash recovery.
 ---
 
 # Herdr Engineering Loop: Session Controller Guide
@@ -18,9 +18,9 @@ Every Herdr engineering run must maintain these essential safety rules:
 1. **The Subagent Ban (every CLI; Codex's `spawn_agent` is the common case):**  
    Never use Codex's native `spawn_agent`, any CLI's internal subagents, agent teams, or background child threads. All agents must be registered inside explicit Herdr workspaces and panes (`herdr agent start`). If Herdr is unavailable, report `BLOCKED: HERDR_WORKER_UNAVAILABLE`.
 2. **Worker Origin & Workspace Invariants:**  
-   A code Worker exists only when the Delegator provisions a Git worktree and Herdr workspace/pane, arranges launch through the authorized owner, and confirms registration. A human-approved `non-code-isolated-copy` exception still requires a separately registered Herdr agent and pane, but no Git worktree or fabricated commit.
-3. **Worker Test-Execution Ban:**  
-   Implementation workers (`herdr-worker`) are strictly forbidden from running test suites, builds, linters, typecheckers, or package installations, even if the worker runs Claude Haiku. Workers write code and generate `REPORT.md`. All verification belongs exclusively to the Delegator or dedicated Verifier.
+   A governed code Worker requires a Delegator-provisioned Git worktree and Herdr workspace/pane, launch through the authorized owner, and confirmed registration. Standalone Worker assignments follow `herdr-worker` directly and do not create a managed run. A human-approved `non-code-isolated-copy` exception still requires a separately registered Herdr agent and pane, but no Git worktree or fabricated commit.
+3. **Worker Verification Boundary:**
+   Governed Workers never run tests, builds, linters, typecheckers, or package installations. Standalone Workers may run bounded, authorized self-checks and must label them as self-verification. Independent verification belongs to the Delegator or dedicated Verifier.
 4. **Serial Heavy Verification Lock:**  
    At most **one** resource-intensive local verification process (e.g. pytest, npm test, cargo test, docker build) may execute across the machine at any time, regardless of worker count. The lock must be acquired before test execution and released upon completion.
 5. **Git Candidate Fencing & Provenance:**  
@@ -33,7 +33,7 @@ Every Herdr engineering run must maintain these essential safety rules:
 ## 2. Directed Signaling, Receipts & Access Safety
 
 - **Signal Envelope Contract:** Load [Signal and Receipt Contract](references/signals.md) at every role activation. Each agent must know its assigned sender/recipient, handoff event, durable report file, and `ROLE_READY` handshake. Before implementation, a worker must have a worker-local `READY.md`, an observed Delegator receipt, and a deliberate `TASK_START`. A Verifier requires `VERIFY_START` and the serial verification lock. Herdr status toasts alone are not delivery proof.
-- **Access-Denied Preflight:** Load [Access-Denied Preflight](references/access-triage.md) on any permission error or when a spawned agent cannot reach Herdr. Classify the exact protected resource and source pane before escalating; **never automatically elevate, disable a sandbox, edit system ACLs, or switch to invisible Codex subagents**. A Docker pipe or WSL denial is an environment block, not a product-test failure.
+- **Access-Denied Preflight:** Load [Access-Denied Preflight](references/access-triage.md) on any permission error or when a Herdr operation fails. For the same authorized in-scope command, use this agent's native approval request only when its current tool offers one; wait for the decision and verify the postcondition. Herdr origin is required only for Herdr actions. Never self-grant, bypass a deny, elevate, disable a sandbox, edit ACLs, or switch to invisible subagents.
 - **Run Authority & Cancellation:** Load [Run Integrity](references/run-integrity.md) when opening a new run, recovering a replaced attempt, freezing a verification candidate, or processing a cancellation. Record the human execution grant in the ledger. On `CANCEL_RUN`, stop further dispatch, preserve evidence, account for each run-owned process, and release locks only after verified process termination.
 - **Human-Facing Progress Presentation:** Load [Human-Facing Task Presentation](references/user-status.md) before replying with task progress. Decouple internal machine keys (`T01`, `T01-A1`, pane IDs) from human updates. Summarize slices using approved titles and outcomes.
 
@@ -41,7 +41,7 @@ Every Herdr engineering run must maintain these essential safety rules:
 
 ## 3. Environment Discovery & Topology Inspection
 
-Before creating or mutating any session state, discover the current environment:
+Before creating a governed run or mutating its state, discover the current environment. A direct standalone Worker assignment does not need Herdr discovery unless the requested operation uses Herdr.
 
 ```powershell
 # 1. Verify active Herdr session environment:
@@ -59,34 +59,37 @@ git status --short
 
 - **Reuse Existing Topology:** Prefer existing workspaces and panes created by the human operator.
 - **Record Observed IDs:** Always use actual IDs returned by Herdr commands (e.g. `w35:p1`), never guessed names.
-- **Check Permission & Sockets:** If access fails, run `tools/access_probe.py` to diagnose IPC or filesystem restrictions. Do not elevate to Administrator or disable sandboxes. For CLI syntax details, consult [Herdr Operations](references/herdr-cli.md).
+- **Check Permission & Sockets:** For a Herdr-dependent action, use `tools/access_probe.py` to classify IPC or filesystem restrictions. It cannot observe native approval or grant access. Request permission only through the active CLI's own tool for the same in-scope action; never elevate, alter policy/ACLs, or disable a sandbox. For CLI syntax, consult [Herdr Operations](references/herdr-cli.md).
 
 ---
 
-## 4. State Backends: Markdown Authority vs. Offline SQLite Pilot
+## 4. State Backends: Markdown Default and Explicit SQLite
 
-Herdr Role Pack v2.8 maintains single live authority while providing an isolated offline pilot engine:
+Each run has one selected authority; new runs default to Markdown until the Windows promotion gate passes:
 
 ### Active Runtime Authority: Markdown Ledger (`state_backend: "markdown"`, Active Authority)
 - **Primary Document:** `<repo>/.herdr-loop/<run-id>/SESSION.md`.
 - **Ownership:** Maintained directly by `herdr-delegator` (or `herdr-lead` in lead mode).
 - **Use Case:** Transparent, human-editable, zero-tool dependency live runs where Markdown and Git history are authoritative.
-- **Verification Lock:** Serial heavy verification lock is an advisory coordination invariant tracked in `SESSION.md`.
+- **Verification Lock:** Wrap approved heavy commands with `scripts/verification_guard.py`, shared with SQLite; record exact tested SHA and result in `SESSION.md`.
 - **Constraint:** Do not initialize `ledger.sqlite` in a Markdown-backed live run.
 
-### Isolated Offline Engine: Transactional SQLite Ledger (`scripts/herdr_ledger.py`, Offline Pilot Only)
+### Explicit SQLite run (`scripts/herdr_ledger.py`)
 - **Primary Database:** `<repo>/.herdr-loop/<run-id>/ledger.sqlite`.
 - **Ownership:** Deterministic CLI commands via `scripts/herdr_ledger.py`.
-- **Reference Contract:** Follow [SQLite Ledger Pilot](references/sqlite-ledger-pilot.md) for detailed schema v2 transitions, atomic claim fences, and receipt requirements.
-- **Use Case:** Isolated offline CLI evaluation, token-efficient benchmarking, and automated state transition validation.
-- **Verification Lock:** Heavy verification lock is enforced via per-run SQLite ledger table `active_verification_lock`.
-- **Constraint:** Live runs strictly reject SQLite. `tools/role_bind.py` explicitly fails closed (`SQLITE_BACKEND_NOT_LIVE`) if configured with `state_backend: "sqlite"`.
+- **Reference Contract:** Follow [SQLite Ledger Pilot](references/sqlite-ledger-pilot.md) for typed transitions, atomic claim fences, and receipt requirements.
+- **Use Case:** Explicit typed orchestration and offline evaluation; live Windows proof remains a default-promotion gate.
+- **Verification Lock:** The CLI uses per-run claims and the shared machine gate with observed process ownership.
+- **Constraint:** Explicit SQLite binding creates a `PLANNING` ledger. Activation records observed setup, with separate correlated acknowledgment before typed role transitions. Transfer accepts validated quiescent checkpoints; unobservable descendants remain blocked. Keep Markdown as the default until the exact-commit Windows lifecycle gate passes.
+- **Candidate procedure:** Read [SQLite role procedure](references/sqlite-live.md) when inspecting an explicitly selected SQLite run.
 
 ---
 
 ## 5. Role Assignment & Packet Binding
 
 To configure and bind roles for a run:
+
+For a direct one-off assignment, follow [Standalone Mode](../herdr-worker/SKILL.md#standalone-mode) and skip the governed-run setup. If a single Herdr-launched Worker needs a generated packet, set `execution_mode: "standalone"` and provide exactly one `agents.workers` entry, as in `examples/roles.standalone-worker.json`. The binder creates no `SESSION.md`, SQLite ledger, Manager/Delegator lifecycle, or handshake, and it does not start the agent.
 
 1. **Define the Roster (`roles.json`):**
    Specify run ID, base reference, backend, and assigned agents. Set `max_active_workers: 1` by default. Multiple concurrent workers (up to 3) require explicit human authorization and non-overlapping scopes.
@@ -107,7 +110,7 @@ To configure and bind roles for a run:
 
 Read [Model Routing](references/model-routing.md) before launching any worker, verifier, or critic.
 
-**Other AI CLIs.** The model names in this pack (Haiku, Sonnet, `gpt-6-luna`) are defaults for Claude, Codex and Agy, not requirements. Any CLI that Herdr can start and that loads `SKILL.md` skills can hold a role; `tools/role_bind.py` accepts its kind with a warning. Rules that name Codex (the override-launch table below, `spawn_agent`) apply only to Codex. These apply to **every** CLI: each agent is a named Herdr agent in its own pane, never an in-process subagent; Workers never run tests; and every role stays inside its own skill.
+**Other AI CLIs.** The model names in this pack (Haiku, Sonnet, `gpt-6-luna`) are defaults for Claude, Codex, Agy and OpenCode, not requirements. `tools/role_bind.py` recognizes `claude`, `codex`, `agy` and `opencode` in every role; any other kind that Herdr can start and that loads `SKILL.md` skills is accepted with a warning. Rules that name Codex (the override-launch table below, `spawn_agent`) apply only to Codex. In governed runs, every agent is a named Herdr agent in its own pane, never an in-process subagent, and Workers never run tests. Standalone Workers follow `herdr-worker` and may run bounded, authorized self-checks. Every role stays inside its own skill.
 
 Due to CLI environment restrictions, a **Codex Delegator cannot launch a model-overridden Codex CLI worker** (`-m gpt-6-luna -c model_reasoning_effort='"xhigh"'`). Follow this dispatch table:
 
@@ -128,17 +131,22 @@ herdr agent start worker_t01 --kind claude --pane <pane-id> -- --model claude-ha
 # Claude Sonnet 5.5 Critic (Read-Only):
 herdr agent start critic_t01 --kind claude --pane <pane-id> -- --model claude-sonnet-5-5
 
-# Agy CLI Worker (Sandboxed):
-herdr agent start worker_t01 --kind agy --pane <pane-id> -- --sandbox --dangerously-skip-permissions
+# Agy CLI Worker (normal configured permissions; check flags on the target platform):
+herdr agent start worker_t01 --kind agy --pane <pane-id>
+
+# OpenCode Worker (any configured provider/model; verify the effective model):
+herdr agent start worker_t01 --kind opencode --pane <pane-id>
 ```
+
+Governed work and approval-path checks use Agy's normal permission flow. The optional smooth unattended mode is limited to a human-selected disposable worktree, with Agy sandbox active before `--dangerously-skip-permissions` is used; see [Agy worker launch](references/herdr-cli.md) and [Native permission capability by harness](references/permission-capabilities.md). Never use it to recover from a denial or sandbox failure. OpenCode loads a skill by mentioning `@skill-id` or via its `skill` tool; confirm the installed CLI's effective model and native approval behavior before relying on them.
 
 Always verify actual model and reasoning effort via `herdr agent get <name>` before prompting.
 
 ---
 
-## 7. SQLite Transactional Ledger Execution Sequence (Offline Pilot)
+## 7. SQLite Transactional Ledger Execution Sequence (Explicit Opt-in)
 
-When testing transitions offline using the pilot CLI `scripts/herdr_ledger.py`:
+For a selected governed run, use [SQLite role procedure](references/sqlite-live.md) with current role/epoch flags. The sequence below also illustrates the explicit offline pilot API using `scripts/herdr_ledger.py`:
 
 ```mermaid
 sequenceDiagram
@@ -149,10 +157,10 @@ sequenceDiagram
     participant Manager as Manager
 
     Note over Ledger: 1. Initialization & Plan Sync
-    Delegator->>Ledger: init + plan-sync (PLAN.md v1)
+    Delegator->>Ledger: init + plan-approve (PLAN.md)
     
     Note over Ledger,Worker: 2. Worker Attempt & Handshake
-    Delegator->>Ledger: task-reserve (T01, T01-A1, worktree)
+    Delegator->>Ledger: attempt-reserve (T01, T01-A1, worktree)
     Delegator->>Ledger: attempt-attach (workspace, pane, agent)
     Worker-->>Delegator: READY.md written + ROLE_READY signal
     Delegator->>Ledger: attempt-ready (receipt + evidence)
@@ -175,17 +183,9 @@ sequenceDiagram
     Delegator->>Ledger: task-accept (T01 ACCEPTED)
 ```
 
-### Command Sequence Summary:
-1. `task-reserve`: Fences the task and worker workspace; increments attempt counter.
-2. `attempt-attach`: Reads Herdr runtime PID and registration; transitions state to `OBSERVED`.
-3. `attempt-ready`: Verifies worker-local `READY.md` containing observed model, pane, and agent.
-4. `attempt-start`: Unlocks source implementation; records operator receipt and approved plan SHA.
-5. `attempt-report`: Verifies worker git commit and report existence; marks attempt `REPORTED`.
-6. `candidate-freeze`: Calculates `git patch-id` on both worker and integration commits; rejects mismatched changes.
-7. `verify-start`: Fences the checkout and acquires the run-wide `active_verification_lock`.
-8. `verify-exec`: Executes approved test command synchronously; logs stdout/stderr and exit code.
-9. `decision-record`: Binds the Manager's architectural decision and rationale to candidate SHA.
-10. `task-accept`: Marks task slice `ACCEPTED` only if candidate verification is passing and approved.
+### Command reference:
+
+The exact arguments of every command, and the command list for each role, are generated from the CLI itself: read [Ledger command reference](references/command-reference.md), print your own list with `python herdr_ledger.py --run-dir <run> reference --role <role>`, or print the whole reference with `reference`. Do not hand-maintain command lists in prose. Step-by-step semantics live in [SQLite role procedure](references/sqlite-live.md); bounded reads (`status`, `next`, `packet`, `task-show`, `events`, `recover`) accept `--json` and report their own byte/token cost so you can budget context.
 
 ---
 

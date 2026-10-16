@@ -2,7 +2,7 @@
 
 The installed role workflow still uses `SESSION.md`. This CLI is for new, explicitly authorized disposable runs while the Windows Herdr tracer and authority gates are completed. Do not point it at a Markdown run, migrate a historical run, or make SQLite the default. `role_bind.py` refuses to create Markdown state in a run that already has `ledger.sqlite`.
 
-The CLI lives at `../scripts/herdr_ledger.py` relative to this reference. Use `python herdr_ledger.py --run-dir <run> <command> --help` for exact arguments. The run directory must be outside the clean Git candidate checkout and contain an approved immutable `PLAN.md` and grant reference. `init` creates schema v2. `upgrade` is explicit for an existing v1 SQLite-only pilot, writes `ledger.v1.backup.sqlite` through SQLite's backup API, and marks v1 asserted live attempts and tests `UNCERTAIN`. Unknown schema versions are refused.
+The CLI lives at `../scripts/herdr_ledger.py` relative to this reference. Use `python herdr_ledger.py --run-dir <run> <command> --help` for exact arguments. `init --bootstrap` creates a schema v3 `PLANNING` run without plan approval or execution grant; `plan-approve` and `run-authorize` record separate evidence. Existing pilot initialization with both an immutable `PLAN.md` and grant reference remains available for offline tests. `upgrade` explicitly backs up v1 or v2 SQLite-only pilots before updating schema metadata; v1 asserted live attempts and tests become `UNCERTAIN`. Unknown schema versions are refused. Live role activation remains gated.
 
 ## Attempt and signal contract
 

@@ -9,6 +9,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 BIND = ROOT / 'tools' / 'role_bind.py'
 PROGRESS = ROOT / 'tools' / 'progress_view.py'
+BACKEND = ROOT / 'skills' / 'herdr-engineering-loop' / 'scripts' / 'run_backend.py'
 CONFIG = ROOT / 'examples' / 'roles.example.json'
 
 
@@ -19,6 +20,7 @@ class HumanProgressTests(unittest.TestCase):
         self.repo = Path(self.tmp.name) / 'repo'
         self.repo.mkdir()
         self.config = json.loads(CONFIG.read_text(encoding='utf-8'))
+        self.config['state_backend'] = 'markdown'
         self.config_path = self.repo / 'roles.json'
         self.run = self.repo / '.herdr-loop' / self.config['run_id']
 
@@ -130,6 +132,53 @@ class HumanProgressTests(unittest.TestCase):
         for skill in ('herdr-manager', 'herdr-delegator', 'herdr-engineering-loop'):
             self.assertTrue((ROOT / 'skills' / skill / 'references/user-status.md').exists())
             self.assertIn('references/user-status.md', (ROOT / 'skills' / skill / 'SKILL.md').read_text(encoding='utf-8'))
+
+    def test_progress_view_run_dir_markdown(self):
+        self.assertEqual(self.bind().returncode, 0)
+        res = subprocess.run([sys.executable, str(PROGRESS), '--run-dir', str(self.run)], capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn('No work slices have been recorded yet.', res.stdout)
+
+    def test_progress_view_run_dir_sqlite(self):
+        self.config['state_backend'] = 'sqlite'
+        self.config['run_id'] = 'sqlite-progress'
+        sqlite_run = self.repo / '.herdr-loop' / 'sqlite-progress'
+        self.assertEqual(self.bind().returncode, 0)
+        res = subprocess.run([sys.executable, str(PROGRESS), '--run-dir', str(sqlite_run)], capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn('Work progress', res.stdout)
+
+    def test_legacy_markdown_stays_selected_when_config_omits_backend(self):
+        self.assertEqual(self.bind().returncode, 0)
+        session = self.run / 'SESSION.md'
+        session.write_text(session.read_text(encoding='utf-8') + '\nHuman note.\n', encoding='utf-8')
+        before = session.read_bytes()
+        (self.run / 'backend.active.json').unlink()
+        self.config.pop('state_backend')
+        self.assertEqual(self.bind().returncode, 0)
+        self.assertEqual(session.read_bytes(), before)
+        self.assertFalse((self.run / 'ledger.sqlite').exists())
+
+    def test_damaged_selector_blocks_rebind_and_progress(self):
+        self.assertEqual(self.bind().returncode, 0)
+        (self.run / 'backend.active.json').write_text('{broken', encoding='utf-8')
+        before = (self.run / 'SESSION.md').read_bytes()
+        self.assertIn('BACKEND_INTEGRITY_BLOCKED', self.bind().stderr)
+        result = subprocess.run([sys.executable, str(PROGRESS), '--run-dir', str(self.run)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('BACKEND_INTEGRITY_BLOCKED', result.stderr)
+        self.assertEqual((self.run / 'SESSION.md').read_bytes(), before)
+
+    def test_switch_without_approval_writes_nothing(self):
+        self.assertEqual(self.bind().returncode, 0)
+        before = (self.run / 'SESSION.md').read_bytes()
+        result = subprocess.run([sys.executable, str(BACKEND), '--run-dir', str(self.run),
+                                 'switch', '--to', 'sqlite', '--approval-ref', 'approval.md'], capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('APPROVAL_INVALID', result.stdout + result.stderr)
+        self.assertEqual((self.run / 'SESSION.md').read_bytes(), before)
+        self.assertFalse((self.run / 'ledger.sqlite').exists())
+        self.assertFalse((self.run / 'transfers').exists())
 
 
 if __name__ == '__main__':

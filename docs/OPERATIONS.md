@@ -29,10 +29,16 @@ flowchart TD
 ```
 
 ### Core Invariants:
-1. **Separation of Concerns:** Workers write code but never execute tests. Verifiers execute tests but never edit code. Critics perform read-only reviews. Managers make architectural and acceptance decisions.
-2. **Real Herdr Panes:** Workers must be spawned inside registered Herdr panes. Native Codex subagents (`spawn_agent`, agent teams) are strictly forbidden.
+1. **Separation of Concerns:** Governed Workers write code but never execute tests. A standalone Worker may run bounded, authorized self-checks and must label them self-verification. Verifiers execute independent checks but never edit code. Critics perform read-only reviews. Managers make architectural and acceptance decisions.
+2. **Real Herdr Panes:** Governed Workers must be registered in Herdr panes. A direct standalone assignment in an existing CLI does not need Herdr. Native Codex subagents (`spawn_agent`, agent teams) are strictly forbidden.
 3. **Candidate Fencing:** Before running tests, the integration checkout is frozen. Any subsequent modification invalidates ongoing verification.
-4. **Serial Heavy Verification Lock:** At most **one** memory-heavy local test or build process may run at any time within the run database scope (enforced via SQLite `heavy-local-verification` claim in pilot runs; advisory in standard `SESSION.md` runs). Across independent run databases, operators must coordinate workloads manually.
+4. **Serial Heavy Verification Lock:** SQLite pilot checks use a per-run claim and an exclusive machine lock. Standard `SESSION.md` runs still coordinate serial checks manually; their advisory state does not participate in the SQLite lock.
+
+### Standalone Worker assignment
+
+A direct human assignment can use `herdr-worker` without provisioning a Manager/Delegator team. The current task or supplied plan is the contract; the Worker inspects the authorized checkout, preserves unrelated dirty changes, and reports actual changes and self-checks. It does not require `ROLE.md`, `TASK.md`, `SESSION.md`, SQLite, `ROLE_READY`, or `TASK_START`. Use `examples/roles.standalone-worker.json` with `tools/role_bind.py` only when a single Herdr-launched Worker needs a generated prompt packet. Binding writes no managed run ledger and does not start the agent.
+
+For access recovery, classify the exact boundary first. A same-scope command blocked by the active CLI's supported permission boundary may be requested through that CLI's own approval tool; the user/reviewer decides. Herdr origin is required only for Herdr actions. Never grant permission from the skill, bypass a deny, elevate, edit ACLs/policy, or disable sandboxing. See the controller's [access recovery contract](../skills/herdr-engineering-loop/references/access-triage.md).
 
 ---
 
@@ -49,63 +55,30 @@ flowchart TD
 - **File:** `<repo>/.herdr-loop/<run-id>/ledger.sqlite`.
 - **Tool:** `skills/herdr-engineering-loop/scripts/herdr_ledger.py`.
 - **Purpose:** Evaluates eliminating context window amplification (e.g. 130KB+ `SESSION.md` logs) through deterministic transactional CLI state transitions.
-- **Mutual Exclusion:** Routine role binding (`tools/role_bind.py`) fails closed if configured with `state_backend: "sqlite"` to prevent half-initialized runs. The SQLite ledger CLI is invoked explicitly for isolated offline pilot testing.
+- **Mutual Exclusion:** Routine role binding defaults to Markdown. Explicit SQLite binding creates a planning ledger with typed role activation; execution requires a current observed role, approved plan and separate human grant. Follow the controller's `references/sqlite-live.md`. `run_backend.py switch` supports pristine planning and structured quiescent checkpoints after dry-run and human approval. It refuses active ownership, unconfirmed signals, changed evidence/text, and external worker history without descendant observation. Both backends share `scripts/verification_guard.py` for heavy local checks; retain its gate after unknown process ownership.
 
 ---
 
 ## 3. SQLite Ledger CLI Reference (Offline Pilot)
 
-When running the offline SQLite ledger CLI (`skills/herdr-engineering-loop/scripts/herdr_ledger.py`), state transitions require `--run-dir <path>`:
+The CLI is `skills/herdr-engineering-loop/scripts/herdr_ledger.py`. Every command takes a global `--run-dir <path>`; governed mutations also take `--as-agent <name> --epoch <n>`.
 
-### Initialization & Planning
+### Generated command reference
+
+The exact arguments of every command, and the command list for each role, are **generated from the CLI itself** and committed at [skills/herdr-engineering-loop/references/command-reference.md](../skills/herdr-engineering-loop/references/command-reference.md). Print the same text live with:
+
 ```bash
-# Initialize a new run ledger:
-python skills/herdr-engineering-loop/scripts/herdr_ledger.py --run-dir <run-dir> init \
-  --run-id R01 --repo <repo-path> --plan PLAN.md --grant-ref <base-commit> --max-workers 1
-
-# Add a planned task:
-python skills/herdr-engineering-loop/scripts/herdr_ledger.py --run-dir <run-dir> task-add \
-  --task T01 --title "Fix token redirect" --outcome "Redirects 401" --brief briefs/T01.md --request-id req-add-1
+python skills/herdr-engineering-loop/scripts/herdr_ledger.py --run-dir <run-dir> reference
 ```
 
-### Worker Attempt Lifecycle
+Add `--role <role>` to print only that role's commands, which is the smallest useful read.
+
+Do not hand-maintain command lists in prose: they drift from the parser. A state transition looks like this:
+
 ```bash
-# 1. Reserve a task attempt:
 python skills/herdr-engineering-loop/scripts/herdr_ledger.py --run-dir <run-dir> attempt-reserve \
   --task T01 --attempt T01-A1 --checkout <worktree-path> --agent worker_a1 --provider codex \
   --expected-model gpt-6-luna --expected-effort xhigh --request-id req-res-1
-
-# 2. Attach Herdr process:
-python skills/herdr-engineering-loop/scripts/herdr_ledger.py --run-dir <run-dir> attempt-attach \
-  --attempt T01-A1 --pane w35:p1 --agent worker_a1 --request-id req-att-1
-
-# 3. Record observed ROLE_READY:
-python skills/herdr-engineering-loop/scripts/herdr_ledger.py --run-dir <run-dir> attempt-ready \
-  --attempt T01-A1 --operator delegator --operator-pane w32:p2 --event-id ready1 \
-  --evidence READY.md --receipt receipt.txt --request-id req-rdy-1
-
-# 4. Authorize TASK_START:
-python skills/herdr-engineering-loop/scripts/herdr_ledger.py --run-dir <run-dir> attempt-start \
-  --attempt T01-A1 --operator delegator --operator-pane w32:p2 --sender-pane w32:p2 \
-  --event-id start1 --evidence TASK-ACK.md --receipt start-receipt.txt --request-id req-str-1
-
-# 5. Record REPORT_READY:
-python skills/herdr-engineering-loop/scripts/herdr_ledger.py --run-dir <run-dir> attempt-report \
-  --attempt T01-A1 --evidence REPORT.md --source-sha <worker-sha> \
-  --event-id report1 --recipient delegator --receipt rpt-rcpt.txt --request-id req-rpt-1
 ```
 
-### Verification & Reconciliation
-```bash
-# Acquire serial lock:
-python skills/herdr-engineering-loop/scripts/herdr_ledger.py --run-dir <run-dir> verify-start \
-  --verification V01 --candidate C01 --verifier test_agent --request-id req-vst-1
-
-# Execute verified command:
-python skills/herdr-engineering-loop/scripts/herdr_ledger.py --run-dir <run-dir> verify-exec \
-  --verification V01 --request-id req-vex-1 -- pytest -q
-
-# Reconcile an interrupted verification (checks process quiescence):
-python skills/herdr-engineering-loop/scripts/herdr_ledger.py --run-dir <run-dir> verify-reconcile \
-  --verification V01 --reason "process observed dead" --request-id req-rec-1
-```
+Command sequencing, signals and receipts are explained in the controller's [SQLite role procedure](../skills/herdr-engineering-loop/references/sqlite-live.md).

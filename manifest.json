@@ -14,7 +14,8 @@
   "target_agents": [
     "claude",
     "codex",
-    "agy"
+    "agy",
+    "opencode"
   ],
   "installers": [
     "install.ps1",
@@ -28,7 +29,8 @@
     "tools/progress_view.py",
     "tools/package.py",
     "tools/update.py",
-    "skills/herdr-engineering-loop/scripts/herdr_ledger.py"
+    "skills/herdr-engineering-loop/scripts/herdr_ledger.py",
+    "skills/herdr-engineering-loop/scripts/run_backend.py"
   ],
   "policy": {
     "default_active_implementation_workers": 1,

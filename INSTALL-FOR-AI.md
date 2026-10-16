@@ -1,6 +1,6 @@
 # Installing Herdr Loop Skill: instructions for AI agents
 
-**You are an AI coding agent and your user asked you to install Herdr Loop Skill for yourself.** Follow these steps in order. They work for Claude Code, Codex and Agy, and for any other CLI that loads skills from `SKILL.md` folders.
+**You are an AI coding agent and your user asked you to install Herdr Loop Skill for yourself.** Follow these steps in order. They work for Claude Code, Codex, Agy and OpenCode, and for any other CLI that loads skills from `SKILL.md` folders.
 
 Herdr Loop Skill is a set of role skills (Controller, Manager, Delegator, Lead, Worker, Verifier, Critic) that coordinate several coding agents inside [Herdr](https://herdr.dev). Installing only copies Markdown skill folders into a skills directory. It does not start agents, change code or need admin rights.
 
@@ -8,7 +8,7 @@ Herdr Loop Skill is a set of role skills (Controller, Manager, Delegator, Lead, 
 
 - **Ask before you write.** Tell the user which folder you will install into and which roles, and wait for their OK. Show them the `--dry-run` output first.
 - **Never overwrite folders you didn't install.** The installer refuses to replace a skill folder that lacks the `.herdr-role-pack-managed` marker. If it stops, report the folder; do not delete or rename it to get past the check.
-- **Never elevate.** No `sudo`, no Administrator shell, no permission changes. If a folder is not writable, report it.
+- **Use native permissions.** For an authorized in-scope operation, request approval only through your own CLI's supported tool and wait for its decision. Never self-grant, use `sudo`/Administrator, change ACLs or provider policy, or disable a sandbox. If an install folder is not writable, report it.
 - **Report honestly.** If a step fails or you skipped one, say so.
 
 ## Step 1: Find your skills folder
@@ -18,6 +18,7 @@ Herdr Loop Skill is a set of role skills (Controller, Manager, Delegator, Lead, 
 | Claude Code | `~/.claude/skills` | `--agents claude` |
 | Codex CLI | `~/.agents/skills` | `--agents codex` |
 | Agy CLI | `~/.gemini/antigravity-cli/skills` | `--agents agy` |
+| OpenCode | `~/.config/opencode/skills` | `--agents opencode` |
 | Any other CLI | The folder your tool loads user-level `SKILL.md` skill folders from. Check your own documentation or configuration; if you are not sure, ask the user. | `--target-dir "<absolute path>"` |
 
 Use an absolute path with `--target-dir` (`~` is not expanded inside quotes). If your tool has no skills feature at all, skip to [Step 5](#step-5-if-your-tool-has-no-skills-feature).
@@ -83,6 +84,6 @@ Uninstall removes only folders with the `.herdr-role-pack-managed` marker.
 
 ## Good to know
 
-- **Running a session needs Herdr.** The skills coordinate agents started in Herdr panes; installing them does not install Herdr.
-- **Any CLI can hold a role.** In `roles.json`, set `"kind"` to your CLI's name (for example `"kind": "gemini"`). `tools/role_bind.py` accepts it with a warning, because the pack has only been tested with `claude`, `codex` and `agy`; confirm that `herdr agent start --kind <your-kind>` works.
-- **Model names in the skills are defaults**, chosen for Claude, Codex and Agy. Rules that name Codex (such as never using `spawn_agent`, or the model-override launch table) apply only when you are Codex. These apply to everyone: you run as a named Herdr agent in your own pane, never as an in-process subagent; Workers never run tests; and you stay inside your assigned role's skill.
+- **Governed sessions need Herdr.** A direct standalone Worker task can run in an existing CLI without Herdr; installing skills does not start agents or install Herdr.
+- **Any CLI can hold a role.** `tools/role_bind.py` recognizes `claude`, `codex`, `agy` and `opencode` in every role. For any other CLI, set `"kind"` to its name (for example `"kind": "gemini"`); the binder accepts it with a warning, because the pack has only been tested with `claude`, `codex`, `agy` and `opencode`; confirm that `herdr agent start --kind <your-kind>` works before relying on Herdr integration. Approval support remains unverified until that CLI itself offers a native request for the exact action.
+- **Model names in the skills are defaults**, chosen for Claude, Codex, Agy and OpenCode. Rules that name Codex (such as never using `spawn_agent`, or the model-override launch table) apply only when you are Codex. In governed runs, you operate as a named Herdr agent in your own pane, never as an in-process subagent, and Workers do not run tests. A direct standalone Worker assignment can use bounded self-checks, labeled as self-verification. In every mode, stay inside the assigned role and use only your CLI's real permission flow.

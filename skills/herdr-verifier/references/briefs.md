@@ -127,7 +127,7 @@ Report file: .herdr-loop/REPORT.md inside THIS worktree
 
 Instructions:
 - Stay in this checkout and assigned slice. Do not open new worktrees or agents.
-- Never run tests, lint, typecheck, builds, installs, CI, or deployment steps.
+- In a governed Worker assignment, never run tests, lint, typecheck, builds, installs, CI, or deployment steps. Standalone self-checks follow the direct assignment and `herdr-worker` contract.
 - First acknowledge role/signal route with READY.md + ROLE_READY. Begin implementation only on TASK_START with plan revision.
 - Implement, inspect the diff, and make scoped local commit(s) for code; for an approved non-code isolated copy, report reviewed diff/readback and no Git commit. No push.
 - Write REPORT.md with changed files, exact commit SHA(s), assumptions, risks,
@@ -226,4 +226,4 @@ Report: <run-dir>/verifications/T01.md
 
 ## Permission and environment blocker evidence
 
-On any `Access is denied`, `EPERM`, WinError 5, Docker named-pipe or Herdr socket failure, load [Access-Denied Preflight](access-triage.md) if present. Store exact failed operation (without secrets), effective role and actual pane, resource class, code, and environment-vs-product classification in the appropriate report or `SESSION.md`. Do not request elevation as a default remedy; never disable Agy sandbox, alter global ACLs or silently switch to Codex internal subagents. Workers never run tests to probe Docker.
+On any `Access is denied`, `EPERM`, WinError 5, Docker named-pipe or Herdr socket failure, load [Access-Denied Preflight](access-triage.md) if present. Store the sanitized operation, effective role and actual pane, resource class, code, and environment-vs-product classification in the appropriate report or `SESSION.md`. For an authorized in-scope check blocked only by the current harness, use its native approval tool if offered and verify the result; explicit denial or OS restriction remains a blocker. Never elevate, disable Agy sandbox, alter ACLs, or switch providers to bypass a deny. Workers never run tests to probe Docker.

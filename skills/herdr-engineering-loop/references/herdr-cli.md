@@ -33,13 +33,13 @@ herdr agent get delegator
 herdr agent read delegator --source recent-unwrapped --lines 100
 ```
 
-Swap Claude/Codex roles when selected by the user. Manually started agents can be named after detection using `herdr agent rename <pane-id> <unique-name>`. `agent start` requires an idle shell pane and does not create the pane. Use lower-case unique agent names matching Herdr's name rules; do not start a second agent in an occupied pane.
+Swap Claude/Codex roles when selected by the user. Manually started agents can be named after detection using `herdr agent rename <pane-id> <unique-name>`. `agent start` requires an idle shell pane and does not create the pane. Use lower-case unique agent names matching Herdr's name rules; do not start a second agent in an occupied pane. Governed roles must resolve to a registered name, never a bare pane: addressing an agent by pane id, or one whose name was never set, is refused as `HERDR_AGENT_UNNAMED`, and the fix is `herdr agent rename <pane-id> <unique-name>` followed by passing that same name. `herdr agent list` does not report names, so confirm one with `herdr agent get <unique-name>`. Herdr's installed CLI states that it clears a name when that agent exits, is released, or is replaced, so a name registered earlier can be gone while its pane still hosts the agent; the ledger then probes the pane and reports `HERDR_AGENT_UNNAMED` with the re-name fix when the agent is still live, and a plain `HERDR_ERROR` with a start command when the pane is gone — a cleared name is never reported as an unreachable transport.
 
 ## Worktree worker lifecycle
 
 `worktree create` opens a linked workspace with root pane. Its workspace and root pane identifiers must be read from the response or discovery commands. Git worktree branches should be task-specific and rooted at an approved immutable base ref. To reassign a worker, first check whether reuse of its existing branch/worktree is valid; otherwise create a new worktree only after safe cleanup.
 
-**Mandatory for Codex Delegators:** use the Herdr commands below, not Codex's native `spawn_agent`/subagent/delegation feature. Native Codex subagents are not visible as independently named Herdr agents, do not guarantee the required separate pane/worktree, and cannot satisfy the worker contract. If any Herdr command fails, stop and return `BLOCKED: HERDR_WORKER_UNAVAILABLE`; do not invoke a native subagent as a fallback.
+**Mandatory for Codex Delegators:** use the Herdr commands below, not Codex's native `spawn_agent`/subagent/delegation feature. Native Codex subagents are not visible as independently named Herdr agents, do not guarantee the required separate pane/worktree, and cannot satisfy the worker contract. Classify a failed command and use the current CLI's native approval only for the same authorized operation when offered. If Herdr remains unavailable, return `BLOCKED: HERDR_WORKER_UNAVAILABLE`; do not invoke a native subagent as a fallback.
 
 ```sh
 herdr worktree create --cwd <repo-path> --branch herdr/<run-id>/t01 --base <base-sha> --no-focus
@@ -50,14 +50,22 @@ herdr pane list --workspace <worker-workspace-id>
 
 The delegator copies the task brief to `<worker-worktree>/.herdr-loop/TASK.md` using local file operations appropriate to its platform and keeps a canonical copy in the run directory. Add `.herdr-loop/` to the repo-local Git exclude file (obtained via `git rev-parse --git-path info/exclude`) only if needed and not already ignored. Never commit the task artifacts by accident.
 
-### Agy worker (requested flags)
+### Agy worker (governed/manual default)
 
-Inspect `agy --help` first. The launch below uses the `--` passthrough provided by Herdr. **The bypass flag grants broad tool approval**; verify sandbox behavior on the current platform and keep the worker limited to a trusted checkout without sensitive files or dangerous tools. If the sandbox cannot be relied on, do not attempt an unconfined launch.
+Inspect `agy --help` on the target platform before using optional flags. Governed work and approval-path checks use the CLI's normal permission flow. On Windows, verify the installed UI/version and confirm sandbox startup; do not infer approval support from a flag.
+
+```sh
+herdr agent start worker_t01 --kind agy --pane <worker-shell-pane>
+herdr agent prompt worker_t01 "Read your local ROLE.md/TASK.md, verify Herdr provenance and signal target, write READY.md and send ROLE_READY to Delegator. DO NOT edit product files before TASK_START." 
+```
+
+For a human-selected smooth unattended run, use only a task-specific disposable worktree with no unrelated changes or secrets. After confirming the installed sandbox works, pass both flags to Agy:
 
 ```sh
 herdr agent start worker_t01 --kind agy --pane <worker-shell-pane> -- --sandbox --dangerously-skip-permissions
-herdr agent prompt worker_t01 "Read your local ROLE.md/TASK.md, verify Herdr provenance and signal target, write READY.md and send ROLE_READY to Delegator. DO NOT edit product files before TASK_START." 
 ```
+
+This approves all Agy tool calls and cannot verify native approval. If the sandbox fails to start, stop and resolve that environment issue; do not retry without the sandbox or use the bypass to get past a denial. See [Native permission capability by harness](permission-capabilities.md) for the full boundary.
 
 ### Codex Luna worker
 

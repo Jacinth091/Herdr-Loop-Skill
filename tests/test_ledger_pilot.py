@@ -1,6 +1,8 @@
 """Offline proof for the opt-in SQLite ledger. Never launches Herdr or AI tools."""
 import hashlib
 import importlib.util
+import json
+import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import subprocess
@@ -18,6 +20,22 @@ ledger = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ledger)
 REAL_OBSERVER = ledger.observe_herdr
 REAL_STOPPED = ledger.observe_stopped
+REAL_RECIPIENT = ledger.observe_recipient  # setUp replaces the module attribute with a Mock
+
+RENDERER = ROOT / 'tools' / 'render_reference.py'
+render_spec = importlib.util.spec_from_file_location('render_reference', RENDERER)
+render_reference = importlib.util.module_from_spec(render_spec)
+render_spec.loader.exec_module(render_reference)
+
+
+def _exited_pid():
+    # A real, already-exited PID: observe_stopped's liveness probe must see it as absent.
+    child = subprocess.Popen([sys.executable, "-c", "pass"])
+    child.wait()
+    return child.pid
+
+
+ABSENT_PID = _exited_pid()
 
 
 def shell(*args, cwd=None):
@@ -43,6 +61,9 @@ class LedgerPilotTests(unittest.TestCase):
         unstarted.start()
         self.addCleanup(unstarted.stop)
         self.root = Path(self.temp.name)
+        lock_env = mock.patch.dict(os.environ, {"HERDR_LOCKS_DIR": str(self.root / "locks")})
+        lock_env.start()
+        self.addCleanup(lock_env.stop)
         self.repo = self.root / 'checkout'
         self.repo.mkdir()
         shell('git', 'init', '-q', str(self.repo))
@@ -169,6 +190,27 @@ class LedgerPilotTests(unittest.TestCase):
         self.assertNotIn('T01', view)
         self.assertFalse((self.run_dir/'SESSION.md').exists())
 
+    def test_planning_bootstrap_requires_separate_plan_and_human_grant(self):
+        self.cmd('init', '--run-id', 'sample', '--repo', str(self.repo), '--bootstrap')
+        self.assertIn('state=PLANNING', self.cmd('status'))
+        self.assertIn('not executing', self.cmd('task-add', '--task', 'T01',
+            '--title', 'Prevent duplicate writes', '--outcome', 'Only one record remains',
+            '--brief', 'TASK.md', '--request-id', 'add-T01', ok=False))
+        self.cmd('plan-approve', '--plan', 'PLAN.md', '--decision-id', 'PLAN-D1',
+                 '--authority', 'MANAGER', '--actor', 'manager', '--attestor', 'delegator',
+                 '--rationale', 'MANAGER.txt', '--request-id', 'plan1')
+        self.assertIn('not executing', self.cmd('task-add', '--task', 'T01',
+            '--title', 'Prevent duplicate writes', '--outcome', 'Only one record remains',
+            '--brief', 'TASK.md', '--request-id', 'add-T01', ok=False))
+        (self.run_dir / 'GRANT.md').write_text('Human authorizes execution of approved PLAN.md\n', encoding='utf8')
+        self.cmd('run-authorize', '--grant-ref', 'GRANT.md', '--decision-id', 'GRANT-D1',
+                 '--actor', 'human', '--attestor', 'delegator', '--request-id', 'grant1')
+        self.task()
+        self.assertIn('fence=1', self.reserve())
+        (self.run_dir / 'GRANT.md').write_text('Changed grant\n', encoding='utf8')
+        self.assertIn('grant changed', self.cmd('task-add', '--task', 'T02', '--title', 'Second task',
+            '--outcome', 'Second outcome', '--brief', 'TASK.md', '--request-id', 'add-T02', ok=False))
+
     def test_idempotent_report_and_conflicting_replay(self):
         self.reported()
         result=self.report()
@@ -248,16 +290,14 @@ class LedgerPilotTests(unittest.TestCase):
     def start_orphaned_verification(self):
         """verify-exec dies after launch while its real test process keeps running."""
         self.verifying()
-        real_popen = subprocess.Popen
         launched = []
-        def popen(argv, *args, **kwargs):
-            proc = real_popen(argv, *args, **kwargs)
-            if argv and argv[0] == sys.executable:
-                proc.communicate = mock.Mock(side_effect=OSError('simulated verify-exec crash'))
-                launched.append(proc)
-            return proc
-        with mock.patch.object(ledger.subprocess, 'Popen', side_effect=popen):
-            with self.assertRaisesRegex(OSError, 'simulated verify-exec crash'):
+        def crashed_execute(run, verification, argv, cwd, timeout, begin):
+            child = subprocess.Popen(argv, cwd=cwd)
+            launched.append(child)
+            begin(child.pid)
+            raise OSError('simulated verify-exec crash')
+        with mock.patch.object(ledger.verification_guard, 'execute', side_effect=crashed_execute):
+            with self.assertRaisesRegex(ledger.LedgerError, 'simulated verify-exec crash'):
                 self.cmd('verify-exec', '--verification', 'V01', '--request-id', 'interrupted', '--',
                          sys.executable, '-c', 'import time; time.sleep(60)')
         child = launched[0]
@@ -281,7 +321,11 @@ class LedgerPilotTests(unittest.TestCase):
         self.assertEqual(('RUNNING', 1), self.heavy_lock())
 
         child.kill(); child.wait()
-        recon = self.cmd('verify-reconcile', '--verification', 'V01', '--reason', 'killed', '--request-id', 'rec-dead')
+        # This fixture did not launch through the ownership helper: parent absence alone is insufficient.
+        self.assertIn('no descendant ownership', self.cmd('verify-reconcile', '--verification', 'V01',
+            '--reason', 'killed', '--request-id', 'rec-unknown', ok=False))
+        with mock.patch.object(ledger.verification_guard, 'scope_stopped', return_value=True):
+            recon = self.cmd('verify-reconcile', '--verification', 'V01', '--reason', 'killed', '--request-id', 'rec-dead')
         self.assertIn('claims-released', recon)
         self.assertEqual(('INDETERMINATE', 0), self.heavy_lock())
 
@@ -335,6 +379,146 @@ class LedgerPilotTests(unittest.TestCase):
         self.assertIn('PLAN.md changed', self.reserve(ok=False))
         self.assertEqual('READY T01 Prevent duplicate writes',self.cmd('next'))
 
+    def test_packet_gives_role_scoped_next_action(self):
+        self.init();self.task()
+        def line(text, label):
+            return next(l for l in text.splitlines() if l.startswith(label))
+        delegator = self.cmd('packet', '--role', 'delegator')
+        self.assertEqual('NEXT: attempt-reserve T01', line(delegator, 'NEXT:'))
+        self.assertIn('attempt-reserve', line(delegator, 'MAY-RUN:'))
+        self.assertNotIn('plan-approve', line(delegator, 'MAY-RUN:'))
+        verifier = self.cmd('packet', '--role', 'verifier')
+        self.assertIn('none for role=verifier', line(verifier, 'NEXT:'))
+        self.assertIn('verify-exec', line(verifier, 'MAY-RUN:'))
+        self.assertNotIn('attempt-reserve', line(verifier, 'MAY-RUN:'))
+        for role in ('manager', 'delegator', 'lead', 'worker', 'verifier', 'critic'):
+            self.assertIn(f'role={role}', self.cmd('packet', '--role', role))
+        self.reserve();self.attach();self.report()
+        self.assertEqual('NEXT: candidate-freeze T01', line(self.cmd('packet', '--role', 'delegator'), 'NEXT:'))
+
+    def test_packet_reports_planning_state(self):
+        self.cmd('init', '--run-id', 'sample', '--repo', str(self.repo), '--bootstrap')
+        packet = self.cmd('packet', '--role', 'manager')
+        self.assertIn('state=PLANNING', packet)
+        self.assertIn('NEXT: plan-approve PLAN.md', packet)
+
+    def test_export_write_projection_is_generated_and_never_a_ledger(self):
+        self.init();self.task()
+        self.assertIn('wrote=STATUS.md', self.cmd('export', '--write', 'STATUS.md'))
+        text = (self.run_dir / 'STATUS.md').read_text(encoding='utf8')
+        self.assertIn('non-authoritative', text)
+        self.assertIn('Prevent duplicate writes', text)
+        self.assertFalse((self.run_dir / 'SESSION.md').exists())
+        self.assertIn('mode=sqlite-pilot', self.cmd('status'))
+        for reserved in ('SESSION.md', 'ledger.sqlite', 'ROSTER.md', 'backend.active.json'):
+            self.assertIn('reserved', self.cmd('export', '--write', reserved, ok=False))
+        for unsafe in ('../evil.md', 'sub/evil.md', 'no-extension'):
+            self.assertIn('projection path', self.cmd('export', '--write', unsafe, ok=False))
+        self.assertFalse((self.run_dir.parent / 'evil.md').exists())
+
+    def test_composed_receipt_is_byte_identical_to_an_authored_receipt(self):
+        self.init();self.task();self.reserve()
+        self.cmd('attempt-attach','--attempt','T01-A1','--pane','w3:p1','--agent','worker_a1','--request-id','attach1')
+        self.assertIn('state=READY', self.cmd('attempt-ready','--attempt','T01-A1','--operator','delegator',
+            '--operator-pane','w1:p1','--event-id','c-ready1','--evidence','READY.md','--compose-receipt','--request-id','compose-ready'))
+        digest = hashlib.sha256((self.run_dir/'READY.md').read_bytes()).hexdigest()
+        composed = (self.run_dir/'receipts'/'role_ready-c-ready1.receipt').read_text(encoding='utf8')
+        self.assertEqual(f'ROLE_READY sample T01-A1 c-ready1 worker_a1 w3:p1 delegator\nevidence_sha={digest}\n', composed)
+        self.assertIn('state=STARTED', self.cmd('attempt-start','--attempt','T01-A1','--operator','delegator',
+            '--operator-pane','w1:p1','--sender-pane','w1:p1','--event-id','start1','--evidence','TASK-ACK.md',
+            '--compose-receipt','--request-id','compose-start'))
+        self.assertTrue((self.run_dir/'receipts'/'task_start-start1.receipt').is_file())
+        head = shell('git','-C',str(self.worker),'rev-parse','HEAD').stdout.strip()
+        self.assertIn('state=REPORTED', self.cmd('attempt-report','--attempt','T01-A1','--source-sha',head,
+            '--evidence','REPORT.md','--event-id','c-report1','--recipient','delegator','--compose-receipt','--request-id','compose-report'))
+        self.assertTrue((self.run_dir/'receipts'/'report_ready-c-report1.receipt').is_file())
+
+    def test_receipt_source_requires_exactly_one_input(self):
+        self.init();self.task();self.reserve()
+        self.cmd('attempt-attach','--attempt','T01-A1','--pane','w3:p1','--agent','worker_a1','--request-id','attach1')
+        base = ('--attempt','T01-A1','--operator','delegator','--operator-pane','w1:p1','--event-id','c-ready1','--evidence','READY.md')
+        self.assertIn('exactly one of', self.cmd('attempt-ready',*base,'--request-id','none1',ok=False))
+        authored = self.receipt('ROLE_READY','c-ready1','READY.md','worker_a1','w3:p1','delegator')
+        self.assertIn('exactly one of', self.cmd('attempt-ready',*base,'--receipt',authored,'--compose-receipt','--request-id','both1',ok=False))
+        self.assertFalse((self.run_dir/'receipts').exists())
+
+    def test_generated_command_reference_matches_the_parser(self):
+        committed = (ROOT / 'skills' / 'herdr-engineering-loop' / 'references' / 'command-reference.md').read_text(encoding='utf8')
+        # Compare content, not checkout line endings: a fresh Windows clone rewrites LF to CRLF.
+        self.assertEqual(ledger.command_reference().replace('\r\n', '\n'), committed.replace('\r\n', '\n'))
+        # The documented regeneration recipe must reproduce the committed artifact. Shell
+        # redirection cannot: Windows PowerShell emits UTF-16LE with CRLF.
+        self.assertEqual(render_reference.rendered_bytes().replace(b'\r\n', b'\n'),
+                         committed.encode('utf8').replace(b'\r\n', b'\n'))
+        # A guarded REMAINDER positional must render as required on every interpreter:
+        # argparse 3.13 changed its default to required=False, which would otherwise drift.
+        self.assertIn('verify-exec ', committed)
+        self.assertIn('<argv>...', committed)
+        self.assertNotIn('[<argv>...]', committed)
+        for role in ('manager', 'delegator', 'lead', 'worker', 'verifier', 'critic'):
+            self.assertIn(f'`{role}`: ', committed)
+        for name in ledger._subcommands():
+            self.assertTrue(any(l.startswith(f"- `{name}") for l in committed.splitlines()), name)
+
+    def test_reference_command_lists_role_commands_without_a_ledger(self):
+        text = self.cmd('reference')
+        self.assertIn('## Role command lists', text)
+        self.assertIn('`verifier`: ', text)
+        self.assertIn('`verify-exec`', text)
+        verifier = self.cmd('reference', '--role', 'verifier')
+        self.assertIn('verify-exec', verifier)
+        self.assertNotIn('attempt-reserve', verifier)
+        self.assertLess(len(verifier), len(text))
+        self.assertFalse((self.run_dir / 'ledger.sqlite').exists())
+
+    def test_json_reads_are_machine_readable_with_a_read_cost(self):
+        self.init();self.task()
+        status = json.loads(self.cmd('status', '--json'))
+        self.assertEqual('sqlite-pilot', status['mode'])
+        self.assertGreater(status['human_view_cost']['text_bytes'], 0)
+        self.assertGreaterEqual(status['read_cost']['approx_tokens'], 1)
+        self.assertEqual(['T01'], [r['id'] for r in json.loads(self.cmd('next', '--json'))['ready']])
+        show = json.loads(self.cmd('task-show', '--task', 'T01', '--json'))
+        self.assertEqual('T01', show['task'])
+        self.assertEqual([], show['deps'])
+        self.assertEqual('Only one record remains', show['outcome'])
+        events = json.loads(self.cmd('events', '--limit', '5', '--json'))
+        self.assertTrue(events['events'])
+        self.assertTrue(all({'seq', 'op', 'receipt'} <= set(e) for e in events['events']))
+        self.assertTrue(json.loads(self.cmd('recover', '--json'))['never_auto_respawn'])
+        packet = json.loads(self.cmd('packet', '--role', 'verifier', '--json'))
+        self.assertIn('verify-exec', packet['may_run'])
+        self.assertNotIn('attempt-reserve', packet['may_run'])
+        self.assertIn('none for role=verifier', packet['next'])
+
+    def test_status_reports_the_cost_of_the_human_view(self):
+        self.init();self.task()
+        cost = ledger.size_proxy(self.cmd('status', '--human'))
+        self.assertIn(f"view_bytes={cost['text_bytes']} view_tokens={cost['approx_tokens']}", self.cmd('status'))
+
+    def test_attempt_reserve_provider_allowlist_includes_opencode(self):
+        self.init();self.task()
+        self.assertIn('state=RESERVED', self.cmd('attempt-reserve','--task','T01','--attempt','T01-A1',
+            '--checkout',str(self.worker),'--agent','worker_a1','--provider','opencode','--request-id','reserve-oc'))
+        self.assertIn('provider must be', self.cmd('attempt-reserve','--task','T01','--attempt','T01-A2',
+            '--checkout',str(self.worker),'--agent','worker_a1','--provider','gemini','--request-id','reserve-bad',ok=False))
+
+    def test_attempt_reserve_refuses_an_expectation_the_observer_cannot_read(self):
+        # attempt-attach derives model and effort from the agent's process arguments, so an
+        # expectation outside what that reads is refused at reserve rather than guaranteed to
+        # fail later with MODEL_OVERRIDE_NOT_APPLIED (see references/sqlite-live.md). Only Codex
+        # publishes an effort flag, so no other provider can ever confirm one.
+        self.init();self.task()
+        for provider in ('agy', 'claude'):
+            self.assertIn('only observable for Codex', self.cmd('attempt-reserve','--task','T01','--attempt','T01-A1',
+                '--checkout',str(self.worker),'--agent','worker_a1','--provider',provider,'--expected-effort','xhigh',
+                '--request-id','res-'+provider,ok=False))
+        # The refusal is scoped to the unconfirmable declaration: a provider that simply declares
+        # no expectation is still reserved, because a model the pack did not mandate for the role
+        # remains a legitimate reservation.
+        self.assertIn('state=RESERVED', self.cmd('attempt-reserve','--task','T01','--attempt','T01-A1',
+            '--checkout',str(self.worker),'--agent','worker_a1','--provider','claude','--request-id','res-claude'))
+
     def test_conflicting_checkout_claim_and_generation(self):
         self.init(parallel=True);self.task();self.task('T02',title='Independent second slice')
         self.reserve()
@@ -353,6 +537,29 @@ class LedgerPilotTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn('mode=sqlite-pilot', proc.stdout)
 
+    def test_real_cli_persists_rows_in_the_sqlite_ledger(self):
+        """The database, not stdout, is the record: assert rows written by real CLI processes."""
+        def cli(*args):
+            proc = subprocess.run([sys.executable, str(CLI), '--run-dir', str(self.run_dir), *args],
+                                  capture_output=True, text=True, timeout=30)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            return proc.stdout
+        cli('init', '--run-id', 'R01', '--repo', str(self.repo), '--plan', 'PLAN.md',
+            '--grant-ref', 'human-request')
+        cli('task-add', '--task', 'T01', '--title', 'Prevent duplicate writes',
+            '--outcome', 'Only one record remains', '--brief', 'TASK.md', '--request-id', 'add-T01')
+        cli('attempt-reserve', '--task', 'T01', '--attempt', 'T01-A1', '--checkout', str(self.worker),
+            '--agent', 'worker_a1', '--provider', 'codex', '--expected-model', 'gpt-6-luna',
+            '--expected-effort', 'xhigh', '--request-id', 'res1')
+        with closing(sqlite3.connect(self.run_dir / 'ledger.sqlite')) as db:
+            self.assertEqual(('R01', 'EXECUTING'), db.execute("SELECT id, state FROM run").fetchone())
+            self.assertEqual(('T01', 'ACTIVE'), db.execute("SELECT id, state FROM task").fetchone())
+            self.assertEqual(('T01-A1', 'RESERVED'), db.execute("SELECT id, state FROM attempt").fetchone())
+            events = db.execute("SELECT op, receipt FROM event ORDER BY seq").fetchall()
+            self.assertEqual(3, len(events))
+            self.assertTrue(all(receipt for _, receipt in events), events)
+            self.assertEqual(1, db.execute("SELECT COUNT(*) FROM claim WHERE active=1").fetchone()[0])
+
     def test_concurrent_reservations_same_checkout_only_one_wins(self):
         self.init(parallel=True);self.task();self.task('T02',title='Independent second slice')
         def reserve(tid):
@@ -363,7 +570,7 @@ class LedgerPilotTests(unittest.TestCase):
         with ThreadPoolExecutor(max_workers=2) as pool:
             results=list(pool.map(reserve,('T01','T02')))
         self.assertEqual(sorted(r.returncode for r in results),[0,2],results)
-        self.assertTrue(any('resource already claimed' in r.stderr for r in results))
+        self.assertTrue(any('resource already claimed' in r.stderr or 'BACKEND_LOCK_HELD' in r.stderr for r in results))
         self.assertEqual(1,sum('attempt-reserve' in x for x in self.cmd('events','--limit','20').splitlines()))
 
     def test_stale_writer_release_denied_after_reassignment(self):
@@ -406,19 +613,105 @@ class LedgerPilotTests(unittest.TestCase):
             with self.assertRaisesRegex(ledger.LedgerError,'HERDR_IDENTITY_MISMATCH'):
                 REAL_OBSERVER('worker_a1','w3:p1',self.worker,'codex')
 
+    def test_observer_names_the_remedy_when_a_pane_agent_has_no_registered_name(self):
+        # Governance binds to a registered name, never to a bare pane, so an unnamed pane
+        # agent must be its own refusal carrying the remedy -- not a bare identity mismatch.
+        # The pane already hosts an agent, so the remedy is to name it, never to start
+        # another agent in an occupied pane.
+        agent={'agent':{'name':None,'pane_id':'w3:p1','cwd':str(self.worker),'terminal_id':'term-test'}}
+        process={'process_info':{'pane_id':'w3:p1','foreground_processes':[{'name':'codex.exe','pid':1234,
+            'cwd':str(self.worker),'argv':['codex.exe']}]}}
+        with mock.patch.object(ledger,'herdr_json',side_effect=[agent,process]):
+            with self.assertRaisesRegex(ledger.LedgerError,r'HERDR_AGENT_UNNAMED') as caught:
+                REAL_OBSERVER('worker_a1','w3:p1',self.worker,'codex')
+        remedy=str(caught.exception)
+        self.assertIn('herdr agent rename w3:p1 <agent-name>',remedy)
+        self.assertNotIn('herdr agent start',remedy)
+        with mock.patch.object(ledger,'herdr_json',side_effect=[agent]):
+            with self.assertRaisesRegex(ledger.LedgerError,r'HERDR_AGENT_UNNAMED') as caught:
+                REAL_RECIPIENT('worker_a1','w3:p1')
+        self.assertIn('herdr agent rename w3:p1 <agent-name>',str(caught.exception))
+        # Pane-only addressing (the name argument is itself the pane) must not compose a
+        # self-referential remedy such as `herdr agent rename w3:p1 w3:p1`.
+        with mock.patch.object(ledger,'herdr_json',side_effect=[agent,process]):
+            with self.assertRaisesRegex(ledger.LedgerError,r'HERDR_AGENT_UNNAMED') as caught:
+                REAL_OBSERVER('w3:p1','w3:p1',self.worker,'codex')
+        self.assertNotIn('rename w3:p1 w3:p1',str(caught.exception))
+
+    def test_herdr_cli_domain_error_is_not_reported_as_a_transport_failure(self):
+        # Herdr writes its error object to stderr, so reading only stdout reported an ordinary
+        # `agent_not_found` as an unreachable transport and truncated the reason at 100 chars.
+        failed = subprocess.CompletedProcess(args=['herdr'], returncode=1, stdout='',
+            stderr='{"error":{"code":"agent_not_found","message":"agent target ghost not found"}}')
+        env = mock.patch.dict(os.environ, {'HERDR_ENV': '1'})
+        env.start(); self.addCleanup(env.stop)
+        with mock.patch.object(ledger.shutil, 'which', return_value='herdr'), \
+                mock.patch.object(ledger.subprocess, 'run', return_value=failed):
+            with self.assertRaises(ledger.HerdrCliError) as caught:
+                ledger.herdr_json('agent','get','ghost')
+        self.assertEqual('agent_not_found', caught.exception.code)
+        self.assertIn('agent target ghost not found', str(caught.exception))
+        self.assertNotIn('TRANSPORT_UNAVAILABLE', str(caught.exception))
+        # A failure that carries no structured error is still a transport failure.
+        refused = subprocess.CompletedProcess(args=['herdr'], returncode=1, stdout='', stderr='connection refused')
+        with mock.patch.object(ledger.shutil, 'which', return_value='herdr'), \
+                mock.patch.object(ledger.subprocess, 'run', return_value=refused):
+            with self.assertRaisesRegex(ledger.LedgerError, 'HERDR_TRANSPORT_UNAVAILABLE'):
+                ledger.herdr_json('agent','get','ghost')
+
+    def test_observer_reports_a_name_that_vanished_while_its_pane_is_still_live(self):
+        # Herdr clears an agent name when that agent exits, is released, or is replaced, while
+        # the pane keeps hosting it; the refusal must then say "re-name it", not "start it".
+        gone = ledger.HerdrCliError('BLOCKED: HERDR_ERROR: agent target ghost not found', 'agent_not_found')
+        process = {'process_info': {'pane_id': 'w3:p1', 'foreground_processes': [{'name': 'codex.exe',
+            'pid': 1234, 'cwd': str(self.worker), 'argv': ['codex.exe']}]}}
+        with mock.patch.object(ledger,'herdr_json',side_effect=[gone,process]):
+            with self.assertRaisesRegex(ledger.LedgerError,r'HERDR_AGENT_UNNAMED') as caught:
+                REAL_OBSERVER('ghost','w3:p1',self.worker,'codex')
+        self.assertIn('herdr agent rename w3:p1 ghost',str(caught.exception))
+
+    def test_observer_reports_a_missing_agent_when_its_pane_is_gone(self):
+        # The same absent name is NOT a naming problem when nothing occupies the pane.
+        gone = ledger.HerdrCliError('BLOCKED: HERDR_ERROR: agent target ghost not found', 'agent_not_found')
+        no_pane = ledger.HerdrCliError('BLOCKED: HERDR_ERROR: pane w3:p9 not found', 'pane_not_found')
+        with mock.patch.object(ledger,'herdr_json',side_effect=[gone,no_pane]):
+            with self.assertRaisesRegex(ledger.LedgerError,r'HERDR_ERROR') as caught:
+                REAL_OBSERVER('ghost','w3:p9',self.worker,'codex')
+        self.assertNotIn('HERDR_AGENT_UNNAMED',str(caught.exception))
+        self.assertIn('herdr agent start ghost',str(caught.exception))
+        with mock.patch.object(ledger,'herdr_json',side_effect=[gone,no_pane]):
+            with self.assertRaisesRegex(ledger.LedgerError,r'HERDR_ERROR') as caught:
+                REAL_RECIPIENT('ghost','w3:p9')
+        self.assertNotIn('HERDR_AGENT_UNNAMED',str(caught.exception))
+
+    def test_observer_cannot_read_opencode_model_or_effort_from_arguments(self):
+        # OpenCode's argv carries no -m/--model or -c model_reasoning_effort=, so governed
+        # OpenCode attempts must not reserve an expectation the observer can never confirm.
+        agent={'agent':{'name':'oc_probe','pane_id':'w3:p1','cwd':str(self.worker),'terminal_id':'term-test'}}
+        process={'process_info':{'pane_id':'w3:p1','foreground_processes':[{'name':'opencode.exe','pid':1234,
+            'cwd':str(self.worker),'argv':['opencode.exe','--session','ses-test']}]}}
+        with mock.patch.object(ledger,'herdr_json',side_effect=[agent,process]):
+            observed=REAL_OBSERVER('oc_probe','w3:p1',self.worker,'opencode')
+        self.assertEqual('',observed['model'])
+        self.assertEqual('',observed['effort'])
+        process['process_info']['foreground_processes'][0]['argv']=[
+            'opencode.exe','--session','ses-test','--model','anthropic/sonnet']
+        with mock.patch.object(ledger,'herdr_json',side_effect=[agent,process]):
+            self.assertEqual('anthropic/sonnet',REAL_OBSERVER('oc_probe','w3:p1',self.worker,'opencode')['model'])
+
     def test_observer_checks_stopped_or_closed_pane(self):
         with mock.patch.object(ledger, 'herdr_json', return_value={'panes': [{'pane_id': 'w1:p1'}]}):
-            msg = REAL_STOPPED('w3:p1', 1234)
-            self.assertIn('closed and pid=1234 absent', msg)
+            with self.assertRaisesRegex(ledger.LedgerError, 'descendant ownership unavailable'):
+                REAL_STOPPED('w3:p1', ABSENT_PID)
         panes = {'panes': [{'pane_id': 'w3:p1'}]}
-        process = {'process_info': {'pane_id': 'w3:p1', 'foreground_processes': [{'pid': 1234}]}}
+        process = {'process_info': {'pane_id': 'w3:p1', 'foreground_processes': [{'pid': ABSENT_PID}]}}
         with mock.patch.object(ledger, 'herdr_json', side_effect=[panes, process]):
             with self.assertRaisesRegex(ledger.LedgerError, 'UNCERTAIN: observed agent process still present'):
-                REAL_STOPPED('w3:p1', 1234)
+                REAL_STOPPED('w3:p1', ABSENT_PID)
         process_idle = {'process_info': {'pane_id': 'w3:p1', 'foreground_processes': [{'pid': 5678}]}}
         with mock.patch.object(ledger, 'herdr_json', side_effect=[panes, process_idle]):
-            msg = REAL_STOPPED('w3:p1', 1234)
-            self.assertIn('Herdr pane=w3:p1 pid=1234 absent', msg)
+            with self.assertRaisesRegex(ledger.LedgerError, 'descendant ownership unavailable'):
+                REAL_STOPPED('w3:p1', ABSENT_PID)
 
     def test_global_heavy_lock_blocks_another_checkout(self):
         self.frozen()
@@ -426,10 +719,30 @@ class LedgerPilotTests(unittest.TestCase):
         shell('git','-C',str(self.repo),'worktree','add','-q','-b','integration-two',str(other),'HEAD')
         self.cmd('candidate-freeze','--task','T01','--candidate','C02','--checkout',str(other),'--request-id','freeze2')
         self.cmd('verify-start','--verification','V01','--candidate','C01','--verifier','haiku','--request-id','verify1')
+        self.assertIn('resource already claimed', self.cmd('verify-start', '--verification', 'V01',
+            '--candidate', 'C01', '--verifier', 'haiku', '--request-id', 'verify-again', ok=False))
+        self.assertTrue(ledger.machine_lock_path().is_file())
         error=self.cmd('verify-start','--verification','V02','--candidate','C02','--verifier','haiku2','--request-id','verify2',ok=False)
-        self.assertIn('resource already claimed',error)
+        self.assertIn('MACHINE_VERIFICATION_LOCK_HELD',error)
         with closing(sqlite3.connect(self.run_dir/'ledger.sqlite')) as db:
             self.assertEqual(1,db.execute("SELECT COUNT(*) FROM claim WHERE resource='heavy-local-verification' AND active=1").fetchone()[0])
+
+    def test_machine_lock_is_exclusive_across_run_directories(self):
+        first = str(self.run_dir.resolve())
+        second = str((self.root / 'another-run').resolve())
+        ledger.acquire_machine_verification_lock(first, 'V01', os.getpid())
+        with self.assertRaisesRegex(ledger.LedgerError, 'MACHINE_VERIFICATION_LOCK_HELD'):
+            ledger.acquire_machine_verification_lock(second, 'V01', os.getpid())
+        ledger.release_machine_verification_lock(first, 'V01')
+        ledger.acquire_machine_verification_lock(second, 'V01', os.getpid())
+        ledger.release_machine_verification_lock(second, 'V01')
+
+    def test_closed_pane_does_not_release_a_live_pid(self):
+        with mock.patch.object(ledger, 'observe_stopped', REAL_STOPPED), \
+             mock.patch.object(ledger, 'herdr_json', return_value={'panes': []}), \
+             mock.patch.object(ledger, 'is_pid_alive', return_value=True):
+            with self.assertRaisesRegex(ledger.LedgerError, 'pane closed but agent PID is still alive'):
+                ledger.observe_stopped('w3:p1', 1234)
 
     def test_unrelated_clean_candidate_rejected(self):
         self.reported()
@@ -505,8 +818,27 @@ class LedgerPilotTests(unittest.TestCase):
             self.assertEqual(1,backup.execute('PRAGMA user_version').fetchone()[0])
         with closing(sqlite3.connect(db)) as future:
             future.execute('PRAGMA user_version=99')
-        self.assertIn('schema is not v2',self.cmd('status',ok=False))
+        self.assertIn('requires explicit upgrade',self.cmd('status',ok=False))
         self.assertIn('unknown ledger schema',self.cmd('upgrade',ok=False))
+
+    def test_v2_upgrade_adds_verification_process_pid_and_keeps_backup(self):
+        self.init()
+        db = self.run_dir / 'ledger.sqlite'
+        with closing(sqlite3.connect(db)) as conn:
+            conn.execute('ALTER TABLE verification DROP COLUMN process_pid')
+            conn.execute('PRAGMA user_version=2')
+            conn.commit()
+        self.assertIn('requires explicit upgrade', self.cmd('status', ok=False))
+
+        self.assertIn('schema=3', self.cmd('upgrade'))
+        with closing(sqlite3.connect(db)) as upgraded:
+            columns = {row[1] for row in upgraded.execute('PRAGMA table_info(verification)')}
+            self.assertIn('process_pid', columns)
+            self.assertEqual(3, upgraded.execute('PRAGMA user_version').fetchone()[0])
+        with closing(sqlite3.connect(self.run_dir / 'ledger.v2.backup.sqlite')) as backup:
+            columns = {row[1] for row in backup.execute('PRAGMA table_info(verification)')}
+            self.assertNotIn('process_pid', columns)
+            self.assertEqual(2, backup.execute('PRAGMA user_version').fetchone()[0])
 
     def test_progress_and_export_are_read_only_projections(self):
         self.init();self.task()

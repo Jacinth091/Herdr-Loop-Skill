@@ -7,7 +7,7 @@
  *   npx herdr-role-pack
  *   npx herdr-role-pack --dry-run
  *   npx herdr-role-pack --force
- *   npx herdr-role-pack --agents claude,codex,agy
+ *   npx herdr-role-pack --agents claude,codex,agy,opencode
  *   npx herdr-role-pack --roles manager,delegator,worker
  *   npx herdr-role-pack --uninstall
  */
@@ -58,7 +58,7 @@ Usage:
   node bin/install.js [options]
 
 Options:
-  --agents <list>    Comma-separated agents to install for: claude, codex, agy, or all (default: all)
+  --agents <list>    Comma-separated agents to install for: claude, codex, agy, opencode, or all (default: all)
   --roles <list>     Comma-separated roles: manager, delegator, lead, worker, verifier, critic, controller, or all (default: all)
                      'lead' (one agent as Manager + Delegator) also installs manager and delegator
   --force            Update already installed role-pack skills; refuse foreign folders
@@ -70,9 +70,10 @@ Options:
   -h, --help         Show this help message
 
 Target Folders:
-  Claude: ~/.claude/skills
-  Codex:  ~/.agents/skills
-  Agy:    ~/.gemini/antigravity-cli/skills
+  Claude:   ~/.claude/skills
+  Codex:    ~/.agents/skills
+  Agy:      ~/.gemini/antigravity-cli/skills
+  OpenCode: ~/.config/opencode/skills
 `);
 }
 
@@ -139,6 +140,7 @@ function getAgentDirs() {
     claude: path.join(home, '.claude', 'skills'),
     codex: path.join(home, '.agents', 'skills'),
     agy: path.join(home, '.gemini', 'antigravity-cli', 'skills'),
+    opencode: path.join(home, '.config', 'opencode', 'skills'),
   };
 }
 
@@ -149,7 +151,7 @@ function resolveAgents(selection, agentDirs) {
   const requested = selection.toLowerCase().split(',').map(s => s.trim()).filter(Boolean);
   for (const name of requested) {
     if (!agentDirs[name]) {
-      console.error(`Error: Unknown agent '${name}'. Supported: claude, codex, agy, all`);
+      console.error(`Error: Unknown agent '${name}'. Supported: claude, codex, agy, opencode, all`);
       process.exit(2);
     }
   }

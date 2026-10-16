@@ -49,6 +49,7 @@ def get_agent_skill_dirs() -> dict[str, Path]:
         "claude": home / ".claude" / "skills",
         "codex": home / ".agents" / "skills",
         "agy": home / ".gemini" / "antigravity-cli" / "skills",
+        "opencode": home / ".config" / "opencode" / "skills",
     }
 
 

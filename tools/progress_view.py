@@ -109,27 +109,50 @@ def render(content, include_internal_ids=False):
     return "# Work progress\n\n" + "\n".join(entries) + "\n\n_This reflects the recorded session ledger, not a live Git/Herdr verification._\n"
 
 
+SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "skills" / "herdr-engineering-loop" / "scripts"
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+import run_backend
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     source=p.add_mutually_exclusive_group(required=True)
     source.add_argument("--session", type=Path, help="Path to Delegator-owned SESSION.md")
-    source.add_argument("--run-dir", type=Path, help="Path to a SQLite-only run")
+    source.add_argument("--run-dir", type=Path, help="Path to a run directory (auto-resolves active backend)")
     p.add_argument("--include-internal-ids", action="store_true", help="Explicit diagnostic view only")
     args = p.parse_args(argv)
     try:
         if args.run_dir:
-            if (args.run_dir / "SESSION.md").exists():
-                raise ValueError("run has competing SESSION.md and SQLite authorities")
-            ledger=Path(__file__).resolve().parents[1] / "skills/herdr-engineering-loop/scripts/herdr_ledger.py"
-            command=[sys.executable,str(ledger),"--run-dir",str(args.run_dir),"status","--human"]
-            if args.include_internal_ids:command.append("--ids")
-            result=subprocess.run(command,capture_output=True,text=True,timeout=10,check=False)
-            if result.returncode:raise ValueError(result.stderr.strip() or "ledger status unavailable")
-            print(result.stdout,end="")
+            run_dir = args.run_dir.resolve()
+            backend, selector = run_backend.get_active_backend(run_dir)
+            if backend == "sqlite":
+                ledger = SCRIPTS_DIR / "herdr_ledger.py"
+                command = [sys.executable, str(ledger), "--run-dir", str(run_dir), "status", "--human"]
+                if args.include_internal_ids:
+                    command.append("--ids")
+                result = subprocess.run(command, capture_output=True, text=True, timeout=10, check=False)
+                if result.returncode:
+                    raise ValueError(result.stderr.strip() or "ledger status unavailable")
+                print(result.stdout, end="")
+                return 0
+            elif backend == "markdown":
+                session_path = run_dir / "SESSION.md"
+                if not session_path.exists():
+                    raise ValueError(f"SESSION.md missing in Markdown run {run_dir}")
+                print(render(session_path.read_text(encoding="utf-8"), args.include_internal_ids), end="")
+                return 0
+            else:
+                raise ValueError(f"Run in {run_dir} has no active backend or is uninitialized")
+        if args.session:
+            session_path = args.session.resolve()
+            if session_path.parent.is_dir():
+                backend, _ = run_backend.get_active_backend(session_path.parent)
+                if backend == "sqlite":
+                    raise ValueError(f"Cannot read archived/inactive SESSION.md: run '{session_path.parent.name}' active backend is sqlite")
+            print(render(session_path.read_text(encoding="utf-8"), args.include_internal_ids), end="")
             return 0
-        print(render(args.session.read_text(encoding="utf-8"), args.include_internal_ids), end="")
-        return 0
-    except (ValueError, OSError, subprocess.TimeoutExpired) as e:
+    except (ValueError, OSError, subprocess.TimeoutExpired, RuntimeError) as e:
         print("ERROR: " + str(e), file=sys.stderr)
         return 2
 
