@@ -15,6 +15,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [2.9.0] - 2026-10-17
 
+### Highlights
+- **OpenCode can hold governed roles.** The installers put Herdr's role skills where OpenCode loads them.
+- **Agents read less to do the same work.** Reads report their own cost, and an agent can fetch just the slice it needs instead of a whole status document.
+- **The ledger writes the receipts,** so agents stop hand-authoring them.
+- **The command reference is generated from the CLI,** so it cannot drift out of date.
+- **A planning run can move between Markdown and SQLite,** behind a required dry run, a human approval and a journaled cutover.
+- **Dead ends explain themselves.** An agent with no name is told the exact rename command to run, and a name Herdr cleared is no longer reported as a connection failure.
+- **Unverifiable declarations are refused up front,** where they can still be corrected.
+- **For maintainers:** CI covers the documented minimum Python as well as the newest, `npm run test:ci` mirrors CI locally, and `docs/UNPROVEN.md` records what is not yet proven.
+
 ### Added
 - **Generated command reference:** `herdr_ledger.py --run-dir <run> reference` prints the per-role command lists and every command's exact arguments, derived from the CLI parser and role maps rather than hand-written prose; `reference --role <role>` prints just one role's list (about 1 KB for a verifier, versus 6 KB for the full reference). The full text is committed as `references/command-reference.md`, and a test fails if it drifts from the CLI. The duplicated command listings in `docs/OPERATIONS.md` and the controller `SKILL.md` are replaced by pointers to it.
 - **`--json` reads with a read-cost proxy:** `status`, `next`, `task-show`, `events`, `recover` and `packet` accept `--json`; each payload carries `read_cost` (`text_bytes`, `approx_tokens`). Plain `status` also reports `view_bytes`/`view_tokens`, the measured cost of the detailed human view.

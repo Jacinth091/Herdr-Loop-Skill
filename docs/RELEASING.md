@@ -19,7 +19,7 @@ Every published GitHub Release must include the following verified artifacts:
 1. `herdr-role-pack-vX.Y.Z.zip`: Complete archive containing all six managed role skills, platform installers, tools, and license.
 2. `herdr-controller-vX.Y.Z.zip`: Standalone controller skill package for environments supporting single-skill imports.
 3. `SHA256SUMS`: Cryptographic SHA-256 digests for all generated archive assets.
-4. Release Notes: the `## [X.Y.Z]` section of `CHANGELOG.md`, extracted by the publish job and used as the release body, so the published notes are exactly what shipped rather than a generated summary of pull request titles.
+4. Release Notes: the release page leads with the `### Highlights` block from the `## [X.Y.Z]` section of `CHANGELOG.md`, written for a reader rather than a maintainer. The technical `### Added` / `### Changed` / `### Fixed` lists follow it inside a collapsed "Technical details" expander, with a link back to `CHANGELOG.md` at the tag. The publish job builds all of it from the changelog, so the page cannot disagree with it.
 
 ---
 
@@ -31,6 +31,7 @@ Before creating a release tag, maintainers must verify:
 - [ ] Packaging dry-run succeeds with zero path escapes, no duplicate archive members, and no unmanaged artifacts (`.herdr-loop/`, `__pycache__`, `.env`).
 - [ ] `CHANGELOG.md` has a `## [X.Y.Z] - YYYY-MM-DD` section (the release workflow refuses the tag without `## [X.Y.Z]`).
 - [ ] Working tree is clean and all commits are merged to `main`.
+- [ ] The `## [X.Y.Z]` section opens with a non-empty `### Highlights` block (the release workflow refuses to publish without one).
 
 ---
 
@@ -39,6 +40,7 @@ Before creating a release tag, maintainers must verify:
 ### Step 1: Update Version & Changelog
 Update `manifest.json` and `package.json` to the target version `X.Y.Z`. The version is also asserted literally in `tests/test_pack.py` (two assertions) and `tests/test_progress_view.py` (one); bump them in the same commit, or the suite fails before the tag can be pushed.
 Move the notes in `CHANGELOG.md` from `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`. Leave forward-looking `### Planned` items under `[Unreleased]`: released sections carry only what shipped.
+Open the section with a `### Highlights` block: a handful of short, plain-language bullets saying what changed for the reader and why it matters, with command names kept secondary because the technical lists below carry them. The `### Added` / `### Changed` / `### Fixed` lists stay as they are, and they are what the release page collapses behind "Technical details".
 
 `main` is protected by the `Protect main` ruleset, which requires a pull request plus the two `Test & Validate` status checks. A direct `git push origin main` is rejected with `push declined due to repository rule violations`, so land the release commit through a PR:
 
@@ -73,4 +75,4 @@ The workflow:
 1. Verifies the tag is strict `vX.Y.Z`, matches `manifest.json`, `package.json` and a `CHANGELOG.md` section, and points at a commit on `main` (otherwise nothing is published).
 2. Runs the full test suite and installer dry-runs on Ubuntu and Windows at the tagged commit.
 3. Runs `tools/package.py` to produce release ZIPs and `SHA256SUMS`.
-4. Creates the GitHub Release with the attached assets and a body taken from the `## [X.Y.Z]` section of `CHANGELOG.md` (`gh release create --notes-file`), so the published notes are the curated changelog entry rather than a generated PR summary.
+4. Builds the release body from that `CHANGELOG.md` section, refusing to publish unless it opens with a non-empty `### Highlights` block: the highlights become the body of the page, the technical lists follow inside a collapsed "Technical details" expander, and a link to `CHANGELOG.md` at the tag is appended (`gh release create --notes-file`).

@@ -92,31 +92,62 @@ jobs:
         run: |
           python tools/package.py --output-dir dist
 
-      - name: Extract Release Notes from CHANGELOG
+      - name: Build Release Notes from CHANGELOG
         env:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          VER="${TAG#v}"
-          python - "$VER" <<'PY'
+          python - <<'PY'
+          import os
           import pathlib
           import re
           import sys
 
-          version = sys.argv[1]
+          tag = os.environ["TAG"]
+          version = tag[1:] if tag.startswith("v") else tag
           text = pathlib.Path("CHANGELOG.md").read_text(encoding="utf8")
-          pattern = re.compile(
+          section = re.search(
               rf"^## \[{re.escape(version)}\][^\n]*\n(?P<body>.*?)(?=^## \[|\Z)",
+              text,
               re.MULTILINE | re.DOTALL,
           )
-          match = pattern.search(text)
-          if not match:
+          if not section:
               sys.exit(f"ERROR: CHANGELOG.md has no '## [{version}]' section")
-          body = re.sub(r"\n-{3,}[ \t]*\n?\s*$", "", match.group("body")).strip()
-          if not body:
-              sys.exit(f"ERROR: the '## [{version}]' section is empty")
-          pathlib.Path("release-notes.md").write_text(body + "\n", encoding="utf8", newline="\n")
-          print(f"Extracted '## [{version}]' from CHANGELOG.md ({len(body)} chars)")
+          body = re.sub(r"\n-{3,}[ \t]*\n?\s*$", "", section.group("body")).strip()
+
+          highlights = re.match(
+              r"### Highlights[ \t]*\n(?P<text>.*?)(?=^### |\Z)",
+              body,
+              re.MULTILINE | re.DOTALL,
+          )
+          if not highlights:
+              sys.exit(f"ERROR: the '## [{version}]' section has no '### Highlights' block")
+          headline = highlights.group("text").strip()
+          details = body[highlights.end():].strip()
+          if not headline:
+              sys.exit("ERROR: the '### Highlights' block is empty")
+          if not details:
+              sys.exit("ERROR: no technical detail follows '### Highlights'")
+
+          repo = f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}"
+          notes = [
+              "### Highlights",
+              "",
+              headline,
+              "",
+              "<details>",
+              "<summary>Technical details</summary>",
+              "",
+              details,
+              "",
+              "</details>",
+              "",
+              f"Full changelog: [CHANGELOG.md at {tag}]({repo}/blob/{tag}/CHANGELOG.md)",
+          ]
+          pathlib.Path("release-notes.md").write_text(
+              "\n".join(notes) + "\n", encoding="utf8", newline="\n"
+          )
+          print(f"Built release notes for {tag}: {len(headline)} chars of highlights, {len(details)} chars of detail")
           PY
           test -s release-notes.md
 
