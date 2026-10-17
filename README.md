@@ -155,7 +155,7 @@ Every option in the table above works here too, e.g. `npx . --agents claude --ro
 # Review actions first:
 .\install.ps1 -DryRun
 
-# Install all six skills:
+# Install all seven skills:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
@@ -164,7 +164,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 # Review actions first:
 sh ./install.sh --dry-run
 
-# Install all six skills:
+# Install all seven skills:
 sh ./install.sh
 ```
 
