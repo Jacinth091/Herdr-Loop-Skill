@@ -346,11 +346,31 @@ def opencode_configured_model(checkout):
     return model
 
 
+def opencode_session_model(checkout, session_id):
+    """The model the live OpenCode session runs, from its export; a config can name another one."""
+    executable = shutil.which("opencode")
+    if not executable:
+        fail("BLOCKED: OPENCODE_MODEL_UNOBSERVABLE")
+    try:
+        result = subprocess.run([executable, "session", "export", session_id], cwd=str(checkout),
+                                capture_output=True, text=True, encoding="utf-8", timeout=15, check=False)
+        exported = json.loads(result.stdout) if result.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        fail("BLOCKED: OPENCODE_MODEL_UNOBSERVABLE")
+    info = exported.get("info") if isinstance(exported, dict) else None
+    model = info.get("model") if isinstance(info, dict) else None
+    if (not isinstance(model, dict) or not isinstance(model.get("providerID"), str) or
+            not isinstance(model.get("id"), str) or not model["providerID"] or not model["id"]):
+        fail("BLOCKED: OPENCODE_MODEL_UNOBSERVABLE")
+    return model["providerID"] + "/" + model["id"]
+
+
 def observe_herdr(name, pane, checkout, provider):
     """Read installed Herdr state before the SQLite write transaction.
 
-    The model comes from process arguments, or for OpenCode from its resolved config when the
-    arguments carry none. Effort comes from process arguments only.
+    The model comes from process arguments. For OpenCode without them, it comes from the live
+    session export when Herdr reports an OpenCode session, else from the resolved config. Effort
+    comes from process arguments only.
     """
     try:
         agent = herdr_json("agent", "get", name)["agent"]
@@ -390,7 +410,11 @@ def observe_herdr(name, pane, checkout, provider):
         if arg == "-c" and argv[i + 1].startswith("model_reasoning_effort="):
             effort = argv[i + 1].split("=", 1)[1].strip("\"'")
     if provider == "opencode" and not model:
-        model = opencode_configured_model(checkout)
+        session = agent.get("agent_session") or {}
+        if session.get("source") == "herdr:opencode" and isinstance(session.get("value"), str) and session["value"]:
+            model = opencode_session_model(checkout, session["value"])
+        else:
+            model = opencode_configured_model(checkout)
     return dict(agent=name, pane=pane, terminal=agent.get("terminal_id", ""), pid=p["pid"],
                 model=model, effort=effort)
 
@@ -860,8 +884,9 @@ def status_human(run, tasks, ids=False):
 
 
 ROLE_ORDER = ("manager", "delegator", "lead", "worker", "verifier", "critic")
-# What attempt-attach can confirm: the model from process arguments or, for OpenCode, from
-# `opencode debug config`; effort only from Codex's flag (-c model_reasoning_effort=).
+# What attempt-attach can confirm: the model from process arguments or, for OpenCode, from the
+# live session export (else `opencode debug config`); effort only from Codex's flag
+# (-c model_reasoning_effort=).
 # Reserving an expectation the observer can never read would only block the attach later with
 # MODEL_OVERRIDE_NOT_APPLIED, so reserve refuses it up front. This refuses an unconfirmable
 # declaration; it deliberately does not mandate one, because a model the pack did not choose for

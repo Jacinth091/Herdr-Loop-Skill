@@ -685,20 +685,28 @@ class LedgerPilotTests(unittest.TestCase):
         self.assertNotIn('HERDR_AGENT_UNNAMED',str(caught.exception))
 
     @contextmanager
-    def fake_opencode(self, debug_stdout, tracked=False, found=True, debug_code=0, model_argv=None):
+    def fake_opencode(self, debug_stdout, tracked=False, found=True, debug_code=0, model_argv=None,
+                      session=None, export_stdout='', export_code=0):
         # Stand-ins for Herdr, git and the opencode CLI; the observer runs for real on top of them.
+        # `session` is the OpenCode session Herdr reports for the agent; `calls` records each CLI run.
         agent={'agent':{'name':'worker_a1','pane_id':'w3:p1','cwd':str(self.worker),'terminal_id':'term-test'}}
+        if session:
+            agent['agent']['agent_session']={'agent':'opencode','kind':'id','source':'herdr:opencode','value':session}
         argv=['opencode.exe','--session','ses-test']+(model_argv or [])
         process={'process_info':{'pane_id':'w3:p1','foreground_processes':[{'name':'opencode.exe','pid':1234,
             'cwd':str(self.worker),'argv':argv}]}}
+        calls=[]
         def run(args,**kwargs):
+            calls.append(list(args))
             if 'ls-files' in args:
                 return subprocess.CompletedProcess(args,0 if tracked else 1,'','')
+            if 'export' in args:
+                return subprocess.CompletedProcess(args,export_code,export_stdout,'')
             return subprocess.CompletedProcess(args,debug_code,debug_stdout,'')
         with mock.patch.object(ledger,'herdr_json',side_effect=[agent,process]), \
                 mock.patch.object(ledger.shutil,'which',return_value='opencode' if found else None), \
                 mock.patch.object(ledger.subprocess,'run',side_effect=run):
-            yield
+            yield calls
 
     def test_observer_reads_the_opencode_model_from_its_resolved_config(self):
         # `opencode debug config` lists sources in precedence order; the last one that sets a model wins.
@@ -719,6 +727,25 @@ class LedgerPilotTests(unittest.TestCase):
         for kwargs in ({'debug_stdout':'','found':False},{'debug_stdout':'','debug_code':1},{'debug_stdout':'not json'}):
             with self.fake_opencode(**kwargs), self.assertRaisesRegex(ledger.LedgerError,'OPENCODE_MODEL_UNOBSERVABLE'):
                 REAL_OBSERVER('worker_a1','w3:p1',self.worker,'opencode')
+
+    def test_observer_reads_the_live_session_model_over_a_disagreeing_config(self):
+        # The config can name a model the live session is not running; the session export wins.
+        sources=[{'info':{'model':'opencode/glm-5.3-flash-free'}}]
+        export=json.dumps({'info':{'model':{'id':'deepseek-v4.1-flash-free','providerID':'opencode','variant':'high'}}})
+        with self.fake_opencode(json.dumps(sources),session='ses-test',export_stdout=export) as calls:
+            observed=REAL_OBSERVER('worker_a1','w3:p1',self.worker,'opencode')
+        self.assertEqual('opencode/deepseek-v4.1-flash-free',observed['model'])
+        self.assertIn(['opencode','session','export','ses-test'],calls)
+        self.assertFalse(any('debug' in call for call in calls))
+        # Export failure, or an export that is not the expected shape, fails closed; it never falls back to config.
+        for kwargs in ({'export_code':1},{'export_stdout':'not json'},{'export_stdout':'{"info":{}}'}):
+            with self.fake_opencode(json.dumps(sources),session='ses-test',**kwargs), \
+                    self.assertRaisesRegex(ledger.LedgerError,'OPENCODE_MODEL_UNOBSERVABLE'):
+                REAL_OBSERVER('worker_a1','w3:p1',self.worker,'opencode')
+        # No OpenCode session reported: the export is never run and the config fallback still applies.
+        with self.fake_opencode(json.dumps(sources)) as calls:
+            self.assertEqual('opencode/glm-5.3-flash-free',REAL_OBSERVER('worker_a1','w3:p1',self.worker,'opencode')['model'])
+        self.assertFalse(any('export' in call for call in calls))
 
     def test_observer_blocks_a_tracked_project_opencode_json(self):
         with self.fake_opencode('[]',tracked=True), self.assertRaisesRegex(ledger.LedgerError,'OPENCODE_PROJECT_CONFIG_PRESENT'):
