@@ -19,7 +19,7 @@ Every published GitHub Release must include the following verified artifacts:
 1. `herdr-role-pack-vX.Y.Z.zip`: Complete archive containing all six managed role skills, platform installers, tools, and license.
 2. `herdr-controller-vX.Y.Z.zip`: Standalone controller skill package for environments supporting single-skill imports.
 3. `SHA256SUMS`: Cryptographic SHA-256 digests for all generated archive assets.
-4. Release Notes: Human-readable changelog detailing new capabilities, bug fixes, breaking changes, and known limitations.
+4. Release Notes: the `## [X.Y.Z]` section of `CHANGELOG.md`, extracted by the publish job and used as the release body, so the published notes are exactly what shipped rather than a generated summary of pull request titles.
 
 ---
 
@@ -73,4 +73,4 @@ The workflow:
 1. Verifies the tag is strict `vX.Y.Z`, matches `manifest.json`, `package.json` and a `CHANGELOG.md` section, and points at a commit on `main` (otherwise nothing is published).
 2. Runs the full test suite and installer dry-runs on Ubuntu and Windows at the tagged commit.
 3. Runs `tools/package.py` to produce release ZIPs and `SHA256SUMS`.
-4. Creates the GitHub Release with attached assets and release notes using `gh release create`.
+4. Creates the GitHub Release with the attached assets and a body taken from the `## [X.Y.Z]` section of `CHANGELOG.md` (`gh release create --notes-file`), so the published notes are the curated changelog entry rather than a generated PR summary.
