@@ -64,6 +64,16 @@ class RolePackTests(unittest.TestCase):
         self.assertIn("SQLITE_PILOT_NOT_LIVE",result.stderr)
         self.assertFalse((run / "SESSION.md").exists())
 
+    def test_bind_warns_when_state_backend_unset(self):
+        self.config.pop("state_backend", None)
+        self.save()
+        result = self.bind("--dry-run")
+        self.assertIn("NOTICE state_backend not set", result.stderr)
+        self.config["state_backend"] = "markdown"
+        self.save()
+        result = self.bind("--dry-run")
+        self.assertNotIn("NOTICE state_backend not set", result.stderr)
+
     def test_bind_sqlite_mode_creates_planning_ledger_without_dispatch(self):
         self.config["state_backend"] = "sqlite"
         self.save()

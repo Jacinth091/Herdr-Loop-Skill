@@ -34,7 +34,7 @@ Read [Human-facing task presentation](references/user-status.md) on plan handoff
 ## Before touching workers
 
 1. Verify live `HERDR_ENV=1`, Herdr/agent commands, workspaces/panes, and `git worktree list --porcelain`. Read [Herdr CLI](references/herdr-cli.md) and [Recovery](references/recovery.md) when inspecting live state.
-2. Verify the human execution grant, accepted plan revision and exact Git base SHA; record the integration checkout+branch HEAD, dirty state, already-assigned task/branch/worktree IDs, max-worker budget and evidence of human authorization when above one, and the verification lock (owner, task, exact SHA). Reconcile discrepancies before dispatch.
+2. Verify the human execution grant, accepted plan revision and exact Git base SHA; record the integration checkout+branch HEAD, dirty state, already-assigned task/branch/worktree IDs, max-worker budget and evidence of human authorization when above one, and the verification lock (owner, task, exact SHA). Reconcile discrepancies before dispatch. The state backend was chosen by the human at setup (engineering-loop §4) and is recorded in the plan; if not, ask before binding. Never switch backend mid-run without the transfer procedure.
 3. Translate only an **approved, unblocked** vertical slice into canonical `tasks/Txx.md` with ownership, scope, non-goals, exact base, acceptance, prohibited operations and report format. Use [Handoff contracts](references/briefs.md). Never delegate ambiguous interfaces without asking Manager.
 
 ## Dispatch: approved independent frontier, one worker by default

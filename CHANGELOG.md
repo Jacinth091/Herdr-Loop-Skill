@@ -7,6 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Changed
+- Setup now treats the Markdown/SQLite choice as an explicit human gate before role binding (engineering-loop, lead, delegator).
+- Skills note that `tools/` runs from the pack source checkout or release package, not the installed skill directory.
+
 ### Planned
 - Native Herdr Signals and Relay transport evaluation once upstream becomes available.
 - Extended token billing metrics comparison between Markdown and SQLite state backends.
