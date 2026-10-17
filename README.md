@@ -78,7 +78,7 @@ The skill operates entirely through local Markdown packets, Git commits, and sta
    - Claude Code (`claude`)
    - Codex CLI (`codex`)
    - Agy CLI (`agy`)
-   - OpenCode (`opencode`)
+   - OpenCode (`opencode`); an all-OpenCode run example is in `examples/roles.opencode.json`
 3. **Git:** Repository must have clean Git worktree support.
 4. **Permissions:** The skill uses the active CLI's normal permission flow. For an authorized in-scope command, an agent may request approval through its own native tool when available and must wait for the real decision. It never requires Administrator/root privileges, changes ACLs/policies, or disables sandboxes.
 

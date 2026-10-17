@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from unittest import mock
 import sqlite3
-from contextlib import closing
+from contextlib import closing, contextmanager
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / 'skills' / 'herdr-engineering-loop' / 'scripts' / 'herdr_ledger.py'
@@ -684,20 +684,98 @@ class LedgerPilotTests(unittest.TestCase):
                 REAL_RECIPIENT('ghost','w3:p9')
         self.assertNotIn('HERDR_AGENT_UNNAMED',str(caught.exception))
 
-    def test_observer_cannot_read_opencode_model_or_effort_from_arguments(self):
-        # OpenCode's argv carries no -m/--model or -c model_reasoning_effort=, so governed
-        # OpenCode attempts must not reserve an expectation the observer can never confirm.
-        agent={'agent':{'name':'oc_probe','pane_id':'w3:p1','cwd':str(self.worker),'terminal_id':'term-test'}}
+    @contextmanager
+    def fake_opencode(self, debug_stdout, tracked=False, found=True, debug_code=0, model_argv=None,
+                      session=None, export_stdout='', export_code=0):
+        # Stand-ins for Herdr, git and the opencode CLI; the observer runs for real on top of them.
+        # `session` is the OpenCode session Herdr reports for the agent; `calls` records each CLI run.
+        agent={'agent':{'name':'worker_a1','pane_id':'w3:p1','cwd':str(self.worker),'terminal_id':'term-test'}}
+        if session:
+            agent['agent']['agent_session']={'agent':'opencode','kind':'id','source':'herdr:opencode','value':session}
+        argv=['opencode.exe','--session','ses-test']+(model_argv or [])
         process={'process_info':{'pane_id':'w3:p1','foreground_processes':[{'name':'opencode.exe','pid':1234,
-            'cwd':str(self.worker),'argv':['opencode.exe','--session','ses-test']}]}}
-        with mock.patch.object(ledger,'herdr_json',side_effect=[agent,process]):
-            observed=REAL_OBSERVER('oc_probe','w3:p1',self.worker,'opencode')
-        self.assertEqual('',observed['model'])
+            'cwd':str(self.worker),'argv':argv}]}}
+        calls=[]
+        def run(args,**kwargs):
+            calls.append(list(args))
+            if 'ls-files' in args:
+                return subprocess.CompletedProcess(args,0 if tracked else 1,'','')
+            if 'export' in args:
+                return subprocess.CompletedProcess(args,export_code,export_stdout,'')
+            return subprocess.CompletedProcess(args,debug_code,debug_stdout,'')
+        with mock.patch.object(ledger,'herdr_json',side_effect=[agent,process]), \
+                mock.patch.object(ledger.shutil,'which',return_value='opencode' if found else None), \
+                mock.patch.object(ledger.subprocess,'run',side_effect=run):
+            yield calls
+
+    def test_observer_reads_the_opencode_model_from_its_resolved_config(self):
+        # `opencode debug config` lists sources in precedence order; the last one that sets a model wins.
+        sources=[{'info':{'model':'opencode/glm-5.3-flash-free'}},
+                 {'info':{'model':{'providerID':'opencode','model':'deepseek-v4.1-flash-free'}}},
+                 {'info':{'theme':'dark'}}]
+        with self.fake_opencode(json.dumps(sources)):
+            observed=REAL_OBSERVER('worker_a1','w3:p1',self.worker,'opencode')
+        self.assertEqual('opencode/deepseek-v4.1-flash-free',observed['model'])
         self.assertEqual('',observed['effort'])
-        process['process_info']['foreground_processes'][0]['argv']=[
-            'opencode.exe','--session','ses-test','--model','anthropic/sonnet']
-        with mock.patch.object(ledger,'herdr_json',side_effect=[agent,process]):
-            self.assertEqual('anthropic/sonnet',REAL_OBSERVER('oc_probe','w3:p1',self.worker,'opencode')['model'])
+        with self.fake_opencode(json.dumps([{'info':{'theme':'dark'}}])):
+            self.assertEqual('',REAL_OBSERVER('worker_a1','w3:p1',self.worker,'opencode')['model'])
+        # Explicit launch arguments are read first, as for the other providers.
+        with self.fake_opencode(json.dumps(sources),model_argv=['--model','anthropic/sonnet']):
+            self.assertEqual('anthropic/sonnet',REAL_OBSERVER('worker_a1','w3:p1',self.worker,'opencode')['model'])
+
+    def test_observer_fails_closed_when_the_opencode_model_is_unobservable(self):
+        for kwargs in ({'debug_stdout':'','found':False},{'debug_stdout':'','debug_code':1},{'debug_stdout':'not json'}):
+            with self.fake_opencode(**kwargs), self.assertRaisesRegex(ledger.LedgerError,'OPENCODE_MODEL_UNOBSERVABLE'):
+                REAL_OBSERVER('worker_a1','w3:p1',self.worker,'opencode')
+
+    def test_observer_reads_the_live_session_model_over_a_disagreeing_config(self):
+        # The config can name a model the live session is not running; the session export wins.
+        sources=[{'info':{'model':'opencode/glm-5.3-flash-free'}}]
+        export=json.dumps({'info':{'model':{'id':'deepseek-v4.1-flash-free','providerID':'opencode','variant':'high'}}})
+        with self.fake_opencode(json.dumps(sources),session='ses-test',export_stdout=export) as calls:
+            observed=REAL_OBSERVER('worker_a1','w3:p1',self.worker,'opencode')
+        self.assertEqual('opencode/deepseek-v4.1-flash-free',observed['model'])
+        self.assertIn(['opencode','session','export','ses-test'],calls)
+        self.assertFalse(any('debug' in call for call in calls))
+        # Export failure, or an export that is not the expected shape, fails closed; it never falls back to config.
+        for kwargs in ({'export_code':1},{'export_stdout':'not json'},{'export_stdout':'{"info":{}}'}):
+            with self.fake_opencode(json.dumps(sources),session='ses-test',**kwargs), \
+                    self.assertRaisesRegex(ledger.LedgerError,'OPENCODE_MODEL_UNOBSERVABLE'):
+                REAL_OBSERVER('worker_a1','w3:p1',self.worker,'opencode')
+        # No OpenCode session reported: the export is never run and the config fallback still applies.
+        with self.fake_opencode(json.dumps(sources)) as calls:
+            self.assertEqual('opencode/glm-5.3-flash-free',REAL_OBSERVER('worker_a1','w3:p1',self.worker,'opencode')['model'])
+        self.assertFalse(any('export' in call for call in calls))
+
+    def test_observer_blocks_a_tracked_project_opencode_json(self):
+        with self.fake_opencode('[]',tracked=True), self.assertRaisesRegex(ledger.LedgerError,'OPENCODE_PROJECT_CONFIG_PRESENT'):
+            REAL_OBSERVER('worker_a1','w3:p1',self.worker,'opencode')
+
+    def test_opencode_attach_blocks_on_model_mismatch_and_records_a_match(self):
+        self.init();self.task()
+        self.cmd('attempt-reserve','--task','T01','--attempt','T01-A1','--checkout',str(self.worker),'--agent','worker_a1',
+                 '--provider','opencode','--expected-model','opencode/glm-5.3-flash-free','--request-id','reserve-oc-model')
+        other=json.dumps([{'info':{'model':{'providerID':'opencode','model':'deepseek-v4.1-flash-free'}}}])
+        with self.fake_opencode(other), mock.patch.object(ledger,'observe_herdr',side_effect=REAL_OBSERVER):
+            self.assertIn('MODEL_OVERRIDE_NOT_APPLIED',self.cmd('attempt-attach','--attempt','T01-A1','--pane','w3:p1',
+                '--agent','worker_a1','--request-id','attach-oc-bad',ok=False))
+        match=json.dumps([{'info':{'model':'opencode/glm-5.3-flash-free'}}])
+        with self.fake_opencode(match), mock.patch.object(ledger,'observe_herdr',side_effect=REAL_OBSERVER):
+            self.cmd('attempt-attach','--attempt','T01-A1','--pane','w3:p1','--agent','worker_a1','--request-id','attach-oc-ok')
+        with closing(sqlite3.connect(self.run_dir/'ledger.sqlite')) as conn:
+            self.assertEqual('opencode/glm-5.3-flash-free',
+                             conn.execute("SELECT observed_model FROM attempt WHERE id='T01-A1'").fetchone()[0])
+
+    def test_herdr_json_reads_utf8_payloads(self):
+        # Herdr titles carry status glyphs such as ◑, which a locale codepage decode cannot read.
+        payload=json.dumps({'id':'cli:agent:get','result':{'agent':{'terminal_title':'◑ worker'}}},ensure_ascii=False)
+        done=subprocess.CompletedProcess(args=['herdr'],returncode=0,stdout=payload,stderr='')
+        env=mock.patch.dict(os.environ,{'HERDR_ENV':'1'}); env.start(); self.addCleanup(env.stop)
+        with mock.patch.object(ledger.shutil,'which',return_value='herdr'), \
+                mock.patch.object(ledger.subprocess,'run',return_value=done) as run:
+            result=ledger.herdr_json('agent','get','worker_a1')
+        self.assertEqual('◑ worker',result['agent']['terminal_title'])
+        self.assertEqual('utf-8',run.call_args.kwargs['encoding'])
 
     def test_observer_checks_stopped_or_closed_pane(self):
         with mock.patch.object(ledger, 'herdr_json', return_value={'panes': [{'pane_id': 'w1:p1'}]}):

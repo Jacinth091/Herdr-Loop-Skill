@@ -1,0 +1,38 @@
+{
+  "run_id": "opencode-example",
+  "base_ref": "main",
+  "integration_branch": "herdr/opencode-example/integration",
+  "state_backend": "markdown",
+  "max_active_workers": 1,
+  "verification_concurrency": 1,
+  "agents": {
+    "lead": {
+      "name": "lead",
+      "kind": "opencode",
+      "pane_id": "",
+      "workspace_id": ""
+    },
+    "workers": [
+      {
+        "name": "worker_t01",
+        "kind": "opencode",
+        "model": "opencode/deepseek-v4.1-flash-free",
+        "task_id": "T01",
+        "worktree": "",
+        "pane_id": "",
+        "workspace_id": "",
+        "task_title": "Improve account sign-in error handling",
+        "task_outcome": "Show a clear recovery message when a session expires without changing existing authentication behavior."
+      }
+    ],
+    "verifier": {
+      "name": "verifier_t01",
+      "kind": "opencode",
+      "model": "opencode/glm-5.3-flash-free",
+      "pane_id": "",
+      "workspace_id": ""
+    },
+    "critic": null
+  },
+  "parallel_workers_authorized": false
+}

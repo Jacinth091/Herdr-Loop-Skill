@@ -67,6 +67,8 @@ git status --short
 
 Each run has one selected authority; new runs default to Markdown until the Windows promotion gate passes:
 
+> **Backend choice is a setup gate.** Before binding roles or writing the first ledger entry, the Lead or Delegator asks the human: "Markdown (default, proven) or SQLite (typed ledger, not yet Windows-promoted)?" and records the answer in PLAN.md. Choosing at setup needs no approval file. Switching later needs `run_backend.py switch --dry-run`, a human-authored `Backend transfer approval:` file and a clean checkpoint, and is effectively unavailable once a Worker has launched. SQLite PASS currently comes only from a Verifier's local `verify-exec`; a run whose only gate is remote CI should choose Markdown.
+
 ### Active Runtime Authority: Markdown Ledger (`state_backend: "markdown"`, Active Authority)
 - **Primary Document:** `<repo>/.herdr-loop/<run-id>/SESSION.md`.
 - **Ownership:** Maintained directly by `herdr-delegator` (or `herdr-lead` in lead mode).
@@ -92,8 +94,8 @@ To configure and bind roles for a run:
 For a direct one-off assignment, follow [Standalone Mode](../herdr-worker/SKILL.md#standalone-mode) and skip the governed-run setup. If a single Herdr-launched Worker needs a generated packet, set `execution_mode: "standalone"` and provide exactly one `agents.workers` entry, as in `examples/roles.standalone-worker.json`. The binder creates no `SESSION.md`, SQLite ledger, Manager/Delegator lifecycle, or handshake, and it does not start the agent.
 
 1. **Define the Roster (`roles.json`):**
-   Specify run ID, base reference, backend, and assigned agents. Set `max_active_workers: 1` by default. Multiple concurrent workers (up to 3) require explicit human authorization and non-overlapping scopes.
-2. **Bind Role Packets:**
+   Specify run ID, base reference, backend, and assigned agents. Set `state_backend` to the backend the human chose at the setup gate (§4); omitting it binds Markdown and the binder prints a notice. Set `max_active_workers: 1` by default. Multiple concurrent workers (up to 3) require explicit human authorization and non-overlapping scopes.
+2. **Bind Role Packets:** `tools/` scripts (`role_bind.py`, `activate_roles.py`, `access_probe.py`, `progress_view.py`) ship in the pack's source checkout and release package, not in the installed skill directory; run them from there.
    ```powershell
    py -3 .\tools\role_bind.py --config .\roles.json --repo <repo-path>
    ```
@@ -134,9 +136,15 @@ herdr agent start critic_t01 --kind claude --pane <pane-id> -- --model claude-so
 # Agy CLI Worker (normal configured permissions; check flags on the target platform):
 herdr agent start worker_t01 --kind agy --pane <pane-id>
 
-# OpenCode Worker (any configured provider/model; verify the effective model):
+# OpenCode Worker (provider/model set in the checkout's opencode.json; verify the effective model):
 herdr agent start worker_t01 --kind opencode --pane <pane-id>
 ```
+
+**OpenCode model placement.** OpenCode's v2 TUI has no `--model` flag. Before `herdr agent start --kind opencode`, the Delegator writes `opencode.json` (`{"$schema":"https://opencode.ai/config.json","model":"<provider/model>"}`) into that agent's checkout and adds `opencode.json` to `.git/info/exclude`. If the repository tracks `opencode.json`, stop with `BLOCKED: OPENCODE_PROJECT_CONFIG_PRESENT`. Start with no arguments after `--`.
+
+**OpenCode-only runs.** Every role can be an OpenCode agent: Lead, Delegator, Manager, Worker, Verifier and Critic. Start from `examples/roles.opencode.json` (Lead run with OpenCode Worker and Verifier, no Critic). Each OpenCode agent needs its own unique name, because Herdr names every OpenCode pane `opencode`. Use `herdr agent rename <pane> <name>` for an existing pane, or the name given in `herdr agent start`.
+
+**Binding an existing OpenCode pane.** Put its `pane_id`, `workspace_id` and `worktree` into `roles.json` and give it a unique name. Make sure its checkout has the placed `opencode.json`, restarting the pane if it was launched before that file existed. Then activate the role as usual.
 
 Governed work and approval-path checks use Agy's normal permission flow. The optional smooth unattended mode is limited to a human-selected disposable worktree, with Agy sandbox active before `--dangerously-skip-permissions` is used; see [Agy worker launch](references/herdr-cli.md) and [Native permission capability by harness](references/permission-capabilities.md). Never use it to recover from a denial or sandbox failure. OpenCode loads a skill by mentioning `@skill-id` or via its `skill` tool; confirm the installed CLI's effective model and native approval behavior before relying on them.
 
