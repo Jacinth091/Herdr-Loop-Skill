@@ -7,17 +7,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Planned
+- Native Herdr Signals and Relay transport evaluation once upstream becomes available.
+- Extended token billing metrics comparison between Markdown and SQLite state backends.
+
+---
+
+## [2.10.0] - 2026-10-18
+
+### Highlights
+- **OpenCode is a first-class Worker, Verifier and Critic.** Name any OpenCode model in `roles.json`, such as the free `opencode/deepseek-v4.1-flash-free` or `opencode/glm-5.3-flash-free`, and the run applies it at launch and checks it before work starts.
+- **The model OpenCode is actually running is checked,** so a model switched inside the TUI is caught instead of trusted.
+- **You can run Herdr with only OpenCode.** `examples/roles.opencode.json` is an all-OpenCode Lead run.
+- **Markdown or SQLite is now asked up front.** The Lead or Delegator asks the human before binding a run, and binding without a choice prints a notice instead of silently picking Markdown.
+- **The ledger no longer crashes on Windows** when a Herdr terminal title contains a non-ASCII status glyph.
+
 ### Added
-- OpenCode model IDs (`provider/model`, no `#variant`) are accepted in `roles.json` and recommended for Worker, Verifier and Critic.
+- OpenCode model IDs (`provider/model`, no `#variant`) are accepted in `roles.json` for `kind: "opencode"`. Recommended, not enforced: Worker `opencode/deepseek-v4.1-flash-free`, Verifier `opencode/glm-5.3-flash-free`, Critic no default. The binder warns when an OpenCode role has no model.
 - `examples/roles.opencode.json`: an all-OpenCode Lead run with an OpenCode Worker and Verifier.
+- `tools/role_bind.py` prints `NOTICE state_backend not set; binding markdown...` on stderr when a governed config omits `state_backend`. Behavior is otherwise unchanged. `examples/roles.example.json` and `examples/roles.lead.json` now show the field.
 
 ### Changed
-- OpenCode models are applied through the checkout's `opencode.json` before launch, and the live OpenCode model is observed (session export, or `opencode debug config` before the first prompt).
-- Setup now treats the Markdown/SQLite choice as an explicit human gate before role binding (engineering-loop, lead, delegator).
+- OpenCode models are applied through a git-excluded `opencode.json` in the agent's checkout before launch; a tracked `opencode.json` blocks with `OPENCODE_PROJECT_CONFIG_PRESENT`. The ledger observes the live model from `opencode session export`, or `opencode debug config` before the first prompt, and fails closed with `OPENCODE_MODEL_UNOBSERVABLE`.
+- Setup now treats the Markdown/SQLite choice as an explicit human gate before role binding (engineering-loop, lead, delegator). The gate warns that SQLite PASS needs a local `verify-exec`.
 - Skills note that `tools/` runs from the pack source checkout or release package, not the installed skill directory.
-- Fixed a UTF-8 issue in the ledger.
+- Model routing, the engineering-loop launch section and the Worker/Verifier/Critic skills name OpenCode alongside Claude and Codex, including a rate-limit fallback note for free models.
 
-### Planned
+### Fixed
+- `herdr_ledger.py` and `tools/activate_roles.py` decode Herdr and git output as UTF-8; a non-ASCII Herdr terminal title previously failed with `HERDR_RESPONSE_INVALID` on Windows.
 - Native Herdr Signals and Relay transport evaluation once upstream becomes available.
 - Extended token billing metrics comparison between Markdown and SQLite state backends.
 
