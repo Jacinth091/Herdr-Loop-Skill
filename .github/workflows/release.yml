@@ -92,6 +92,34 @@ jobs:
         run: |
           python tools/package.py --output-dir dist
 
+      - name: Extract Release Notes from CHANGELOG
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VER="${TAG#v}"
+          python - "$VER" <<'PY'
+          import pathlib
+          import re
+          import sys
+
+          version = sys.argv[1]
+          text = pathlib.Path("CHANGELOG.md").read_text(encoding="utf8")
+          pattern = re.compile(
+              rf"^## \[{re.escape(version)}\][^\n]*\n(?P<body>.*?)(?=^## \[|\Z)",
+              re.MULTILINE | re.DOTALL,
+          )
+          match = pattern.search(text)
+          if not match:
+              sys.exit(f"ERROR: CHANGELOG.md has no '## [{version}]' section")
+          body = re.sub(r"\n-{3,}[ \t]*\n?\s*$", "", match.group("body")).strip()
+          if not body:
+              sys.exit(f"ERROR: the '## [{version}]' section is empty")
+          pathlib.Path("release-notes.md").write_text(body + "\n", encoding="utf8", newline="\n")
+          print(f"Extracted '## [{version}]' from CHANGELOG.md ({len(body)} chars)")
+          PY
+          test -s release-notes.md
+
       - name: Create GitHub Release with Verified Assets
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -99,5 +127,5 @@ jobs:
           TAG="${GITHUB_REF#refs/tags/}"
           gh release create "$TAG" dist/* \
             --title "Herdr Role Pack $TAG" \
-            --generate-notes \
+            --notes-file release-notes.md \
             --verify-tag
