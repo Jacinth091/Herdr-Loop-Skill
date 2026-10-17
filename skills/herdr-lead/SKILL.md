@@ -26,7 +26,7 @@ Read [Signal and Receipt Contract](references/signals.md) and [Access-Denied Pre
 
 ## Human gates (mandatory in Lead mode)
 
-1. **Plan gate.** Wearing the Manager hat, write PLAN.md (goal, base SHA, non-goals, slices with human-readable titles and observable outcomes, acceptance per slice). Then **stop and present it**. Record the human's explicit execution grant ("GO") in SESSION.md before creating any worktree, pane or worker.
+1. **Plan gate.** Wearing the Manager hat, write PLAN.md (goal, base SHA, non-goals, slices with human-readable titles and observable outcomes, acceptance per slice). Then **stop and present it**. Record the human's explicit execution grant ("GO") in SESSION.md before creating any worktree, pane or worker. PLAN.md also records the human's state-backend choice (Markdown or SQLite), asked before binding the run, as part of what the human approves before GO (engineering-loop §4).
 2. **Scope gate.** Any change of goal, architecture, public interface or acceptance after GO goes back to the human as a decision request. Do not quietly revise your own approved plan.
 3. **Acceptance gate.** Because you also integrated and verified the change, your verdict is only a recommendation: `RECOMMEND_ACCEPT | REPAIR | BLOCKED`, with the source/integrated SHA table and verification evidence. The human gives final acceptance. Nothing is merged, pushed, tagged or deployed without the human's explicit OK.
 

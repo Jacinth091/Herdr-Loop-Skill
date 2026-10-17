@@ -67,6 +67,8 @@ git status --short
 
 Each run has one selected authority; new runs default to Markdown until the Windows promotion gate passes:
 
+> **Backend choice is a setup gate.** Before binding roles or writing the first ledger entry, the Lead or Delegator asks the human: "Markdown (default, proven) or SQLite (typed ledger, not yet Windows-promoted)?" and records the answer in PLAN.md. Choosing at setup needs no approval file. Switching later needs `run_backend.py switch --dry-run`, a human-authored `Backend transfer approval:` file and a clean checkpoint, and is effectively unavailable once a Worker has launched. SQLite PASS currently comes only from a Verifier's local `verify-exec`; a run whose only gate is remote CI should choose Markdown.
+
 ### Active Runtime Authority: Markdown Ledger (`state_backend: "markdown"`, Active Authority)
 - **Primary Document:** `<repo>/.herdr-loop/<run-id>/SESSION.md`.
 - **Ownership:** Maintained directly by `herdr-delegator` (or `herdr-lead` in lead mode).
@@ -92,8 +94,8 @@ To configure and bind roles for a run:
 For a direct one-off assignment, follow [Standalone Mode](../herdr-worker/SKILL.md#standalone-mode) and skip the governed-run setup. If a single Herdr-launched Worker needs a generated packet, set `execution_mode: "standalone"` and provide exactly one `agents.workers` entry, as in `examples/roles.standalone-worker.json`. The binder creates no `SESSION.md`, SQLite ledger, Manager/Delegator lifecycle, or handshake, and it does not start the agent.
 
 1. **Define the Roster (`roles.json`):**
-   Specify run ID, base reference, backend, and assigned agents. Set `max_active_workers: 1` by default. Multiple concurrent workers (up to 3) require explicit human authorization and non-overlapping scopes.
-2. **Bind Role Packets:**
+   Specify run ID, base reference, backend, and assigned agents. Set `state_backend` to the backend the human chose at the setup gate (§4); omitting it binds Markdown and the binder prints a notice. Set `max_active_workers: 1` by default. Multiple concurrent workers (up to 3) require explicit human authorization and non-overlapping scopes.
+2. **Bind Role Packets:** `tools/` scripts (`role_bind.py`, `activate_roles.py`, `access_probe.py`, `progress_view.py`) ship in the pack's source checkout and release package, not in the installed skill directory; run them from there.
    ```powershell
    py -3 .\tools\role_bind.py --config .\roles.json --repo <repo-path>
    ```
