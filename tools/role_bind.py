@@ -36,11 +36,15 @@ KNOWN_KINDS = {"claude", "codex", "agy", "opencode"}
 NAME = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 RUN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")
 MODEL_ID = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$")
+# OpenCode names models as provider/model; no #variant suffix is accepted.
+OPENCODE_MODEL_ID = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}/[a-zA-Z0-9][a-zA-Z0-9._:-]{0,79}$")
 TITLE_MAX = 90
 OUTCOME_MAX = 240
 PREFERENCES = {"codex_worker": ("gpt-6-luna", "xhigh"),
                "claude_worker": ("claude-haiku-5-5", None),
                "claude_verifier": ("claude-haiku-5-5", None),
+               "opencode_worker": ("opencode/deepseek-v4.1-flash-free", None),
+               "opencode_verifier": ("opencode/glm-5.3-flash-free", None),
                "critic": ("claude-sonnet-5-5", None)}
 
 
@@ -71,11 +75,16 @@ def resolve_preference(role, data, warnings, standalone=False):
     preference = PREFERENCES.get("codex_worker" if role == "worker" and kind == "codex" else
                                  "claude_worker" if role == "worker" and kind == "claude" else
                                  "claude_verifier" if role == "verifier" and kind == "claude" else
+                                 "opencode_worker" if role == "worker" and kind == "opencode" else
+                                 "opencode_verifier" if role == "verifier" and kind == "opencode" else
                                  "critic" if role == "critic" and kind == "claude" else "")
     model = data.get("model", preference[0] if preference else "")
     effort = data.get("reasoning_effort", preference[1] if preference else "") or ""
-    if model and (not isinstance(model, str) or not MODEL_ID.fullmatch(model)):
+    pattern = OPENCODE_MODEL_ID if kind == "opencode" else MODEL_ID
+    if model and (not isinstance(model, str) or not pattern.fullmatch(model)):
         raise ValueError("model must be a single safe model ID for " + data["name"])
+    if kind == "opencode" and role in ("worker", "verifier", "critic") and not data.get("model"):
+        warnings.append(f"{data['name']}: OpenCode model not set; OpenCode will use its own configured default")
     if kind == "codex" and role == "worker":
         if not effort or effort not in ("xhigh", "max"):
             raise ValueError("Codex worker reasoning_effort must be xhigh or max")
@@ -225,6 +234,16 @@ def skill_cmd(kind, skill):
     return ("$" if kind == "codex" else "/") + skill
 
 
+def opencode_model_line(role, agent):
+    """Tell the Delegator how to apply a configured OpenCode model; empty when none is configured."""
+    if role not in ("worker", "verifier", "critic") or agent["kind"] != "opencode" or not agent.get("model"):
+        return ""
+    document = json.dumps({"$schema": "https://opencode.ai/config.json", "model": agent["model"]}, separators=(",", ":"))
+    return ("OpenCode model: Delegator places opencode.json " + document + " in this agent's checkout and lists "
+            "opencode.json in .git/info/exclude before herdr agent start --kind opencode; if the checkout tracks "
+            "opencode.json, stop with BLOCKED: OPENCODE_PROJECT_CONFIG_PRESENT.")
+
+
 def prompt_for(run_id, role, agent, run_dir, recipient=None, config=None):
     name, kind = agent["name"], agent["kind"]
     skill = skill_cmd(kind, SKILLS[role])
@@ -350,6 +369,9 @@ def prompt_for(run_id, role, agent, run_dir, recipient=None, config=None):
                    "role-confirm using run/epoch/name/pane/role/operation/prompt_sha readiness and correlated receipt. "
                    f"Read {SCRIPTS_DIR.parent / 'references' / 'sqlite-live.md'} for the acknowledgment format. "
                    "Use --as-agent with your assigned name and --epoch for typed mutations. Setup grants no task execution.")
+    opencode_line = opencode_model_line(role, agent)
+    if opencode_line:
+        prompt += " " + opencode_line
     return prompt
 
 
@@ -449,6 +471,9 @@ def render_packet(run_id, role, agent, repo, run_dir, config):
         lines += ["Responsibility: send ROLE_READY, await VERIFY_START + exclusive lock, then run only approved serial checks against fixed integration SHA and send VERIFY_READY.",
                   "A Claude Verifier defaults to Haiku 5.5; treat it as a separately named Herdr tester, not an implementation worker. Verify effective model, pane, integration SHA and delegated command scope before locking.",
                   "Forbidden: product code edits, parallel tests, architecture changes or starting other agents."]
+    opencode_line = opencode_model_line(role, agent)
+    if opencode_line:
+        lines.append(opencode_line)
     lines += ["", "## User-visible language (not routing)", "",
               "Keep task_id and attempt_id in Markdown brief/report/signal keys for reconciliation; present the slice title, expected result and evidence-based status to the human. Never use an ID-only progress message. Do not invent a title if it is missing; Delegator must take it from the accepted Manager PLAN before dispatch.",
               "", "## Mandatory signal handshake and access safety", "",

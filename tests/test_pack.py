@@ -229,6 +229,50 @@ class RolePackTests(unittest.TestCase):
         self.assertIn("@herdr-manager", manager["prompt"])
         self.assertIn("@herdr-worker", worker["prompt"])
 
+    def test_opencode_worker_model_binds_and_packet_places_opencode_json(self):
+        worker = self.config["agents"]["workers"][0]
+        worker["kind"] = "opencode"
+        worker["model"] = "opencode/glm-5.3-flash-free"
+        self.save()
+        result = self.bind()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("OpenCode model not set", result.stderr)
+        run_dir = self.repo / ".herdr-loop" / "feature-example"
+        entry = next(a for a in json.loads((run_dir / "ACTIVATION.json").read_text(encoding="utf8"))["agents"] if a["role"] == "worker")
+        self.assertEqual(entry["model"], "opencode/glm-5.3-flash-free")
+        placement = 'opencode.json {"$schema":"https://opencode.ai/config.json","model":"opencode/glm-5.3-flash-free"}'
+        self.assertIn(placement, entry["prompt"])
+        packet = (run_dir / "role-packets" / "worker_t01.md").read_text(encoding="utf8")
+        self.assertIn(placement, packet)
+        self.assertIn("OPENCODE_PROJECT_CONFIG_PRESENT", packet)
+
+    def test_invalid_model_ids_fail_for_their_kind(self):
+        worker = self.config["agents"]["workers"][0]
+        worker["kind"] = "opencode"
+        for bad in ("bad model", "opencode/glm#fast", "opencode"):
+            worker["model"] = bad
+            self.save()
+            result = self.bind()
+            self.assertNotEqual(result.returncode, 0, bad)
+            self.assertIn("model must be a single safe model ID", result.stderr)
+        worker["kind"] = "claude"
+        worker["model"] = "anthropic/sonnet"
+        self.save()
+        self.assertNotEqual(self.bind().returncode, 0)
+
+    def test_opencode_worker_without_model_warns_and_shows_the_recommendation(self):
+        worker = self.config["agents"]["workers"][0]
+        worker["kind"] = "opencode"
+        worker.pop("model", None)
+        self.save()
+        result = self.bind()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("WARNING worker_t01: OpenCode model not set; OpenCode will use its own configured default", result.stderr)
+        run_dir = self.repo / ".herdr-loop" / "feature-example"
+        entry = next(a for a in json.loads((run_dir / "ACTIVATION.json").read_text(encoding="utf8"))["agents"] if a["role"] == "worker")
+        self.assertEqual(entry["model"], "opencode/deepseek-v4.1-flash-free")
+        self.assertNotIn("opencode.json {", entry["prompt"])
+
     def test_parallel_budget_requires_explicit_authorization(self):
         for count in (2, 3):
             with self.subTest(workers=count):

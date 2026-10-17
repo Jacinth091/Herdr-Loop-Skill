@@ -175,7 +175,7 @@ def _run_prompt(herdr, entry):
         prompt += "\n" + entry["_ack_envelope"]
     return subprocess.run([herdr, "agent", "prompt", entry["name"], prompt],
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                          text=True, timeout=30, check=False)
+                          text=True, encoding="utf-8", timeout=30, check=False)
 
 
 def main(argv=None):
@@ -249,7 +249,7 @@ def main(argv=None):
         for entry in targets:
             try:
                 result = subprocess.run([herdr, "agent", "get", entry["name"]], stdout=subprocess.PIPE,
-                                        stderr=subprocess.PIPE, text=True, timeout=15, check=False)
+                                        stderr=subprocess.PIPE, text=True, encoding="utf-8", timeout=15, check=False)
                 preflight.append((entry["name"], result.returncode == 0,
                                   access_probe.sanitize_error(result.stderr or result.stdout)))
             except (OSError, subprocess.TimeoutExpired) as exc:

@@ -130,7 +130,7 @@ def relative_evidence(root, raw):
 def git(checkout):
     root = Path(checkout).resolve(strict=True)
     def g(*argv):
-        cp = subprocess.run(["git", "-C", str(root), *argv], capture_output=True, text=True,
+        cp = subprocess.run(["git", "-C", str(root), *argv], capture_output=True, text=True, encoding="utf-8",
                             timeout=12, check=False)
         if cp.returncode:
             fail("Git identity unavailable: " + " ".join(argv))
@@ -257,7 +257,7 @@ def herdr_json(*argv):
     executable=shutil.which("herdr")
     if not executable:fail("BLOCKED: HERDR_CLI_UNAVAILABLE")
     try:
-        result = subprocess.run([executable, *argv], capture_output=True, text=True, timeout=8, check=False)
+        result = subprocess.run([executable, *argv], capture_output=True, text=True, encoding="utf-8", timeout=8, check=False)
     except (OSError, subprocess.TimeoutExpired) as exc:
         fail("BLOCKED: HERDR_TRANSPORT_UNAVAILABLE: " + type(exc).__name__)
     if result.returncode:
@@ -304,8 +304,54 @@ def unregistered_agent_refusal(name, pane, provider=None, checkout=None):
          f"`herdr agent start {name} --kind <kind> --pane <idle-shell-pane>`")
 
 
+def refuse_tracked_opencode_config(checkout):
+    # A tracked opencode.json would apply to every checkout of this branch and could override the
+    # model the Delegator places per checkout, so it blocks the observation outright.
+    try:
+        tracked = subprocess.run(["git", "-C", str(checkout), "ls-files", "--error-unmatch", "opencode.json"],
+                                 capture_output=True, text=True, encoding="utf-8", timeout=12, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        fail("BLOCKED: OPENCODE_MODEL_UNOBSERVABLE")
+    if tracked.returncode == 0:
+        fail("BLOCKED: OPENCODE_PROJECT_CONFIG_PRESENT")
+    if tracked.returncode != 1:
+        fail("BLOCKED: OPENCODE_MODEL_UNOBSERVABLE")
+
+
+def opencode_configured_model(checkout):
+    """The model OpenCode resolves for this checkout; the last config source that sets one wins."""
+    executable = shutil.which("opencode")
+    if not executable:
+        fail("BLOCKED: OPENCODE_MODEL_UNOBSERVABLE")
+    try:
+        result = subprocess.run([executable, "debug", "config"], cwd=str(checkout), capture_output=True,
+                                text=True, encoding="utf-8", timeout=15, check=False)
+        sources = json.loads(result.stdout) if result.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        fail("BLOCKED: OPENCODE_MODEL_UNOBSERVABLE")
+    if not isinstance(sources, list):
+        fail("BLOCKED: OPENCODE_MODEL_UNOBSERVABLE")
+    model = ""
+    for source in sources:
+        info = source.get("info") if isinstance(source, dict) else None
+        value = info.get("model") if isinstance(info, dict) else None
+        if not value:
+            continue
+        if isinstance(value, str):
+            model = value
+        elif isinstance(value, dict) and isinstance(value.get("providerID"), str) and isinstance(value.get("model"), str):
+            model = value["providerID"] + "/" + value["model"]
+        else:
+            fail("BLOCKED: OPENCODE_MODEL_UNOBSERVABLE")
+    return model
+
+
 def observe_herdr(name, pane, checkout, provider):
-    """Read installed Herdr state before the SQLite write transaction."""
+    """Read installed Herdr state before the SQLite write transaction.
+
+    The model comes from process arguments, or for OpenCode from its resolved config when the
+    arguments carry none. Effort comes from process arguments only.
+    """
     try:
         agent = herdr_json("agent", "get", name)["agent"]
     except HerdrCliError as exc:
@@ -333,6 +379,8 @@ def observe_herdr(name, pane, checkout, provider):
     p = matching[0]
     if Path(p.get("cwd", "")).resolve() != Path(checkout).resolve():
         fail("BLOCKED: HERDR_PROCESS_CWD_MISMATCH")
+    if provider == "opencode":
+        refuse_tracked_opencode_config(checkout)
     argv = p.get("argv", [])
     model = ""
     effort = ""
@@ -341,6 +389,8 @@ def observe_herdr(name, pane, checkout, provider):
             model = argv[i + 1]
         if arg == "-c" and argv[i + 1].startswith("model_reasoning_effort="):
             effort = argv[i + 1].split("=", 1)[1].strip("\"'")
+    if provider == "opencode" and not model:
+        model = opencode_configured_model(checkout)
     return dict(agent=name, pane=pane, terminal=agent.get("terminal_id", ""), pid=p["pid"],
                 model=model, effort=effort)
 
@@ -810,8 +860,8 @@ def status_human(run, tasks, ids=False):
 
 
 ROLE_ORDER = ("manager", "delegator", "lead", "worker", "verifier", "critic")
-# What attempt-attach can confirm from the agent's process arguments (see
-# references/sqlite-live.md): only Codex publishes an effort flag (-c model_reasoning_effort=).
+# What attempt-attach can confirm: the model from process arguments or, for OpenCode, from
+# `opencode debug config`; effort only from Codex's flag (-c model_reasoning_effort=).
 # Reserving an expectation the observer can never read would only block the attach later with
 # MODEL_OVERRIDE_NOT_APPLIED, so reserve refuses it up front. This refuses an unconfirmable
 # declaration; it deliberately does not mandate one, because a model the pack did not choose for
