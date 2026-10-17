@@ -1,6 +1,6 @@
 {
   "name": "herdr-role-pack",
-  "version": "2.9.0",
+  "version": "2.10.0",
   "description": "Herdr role pack skills with a gated SQLite ledger continuation for future new runs",
   "main": "bin/install.js",
   "bin": {
