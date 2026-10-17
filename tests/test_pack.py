@@ -146,7 +146,7 @@ class RolePackTests(unittest.TestCase):
 
     def test_manifest_disallows_codex_subagents(self):
         manifest = json.loads((ROOT / "manifest.json").read_text(encoding="utf8"))
-        self.assertEqual(manifest["version"], "2.8.2")
+        self.assertEqual(manifest["version"], "2.9.0")
         self.assertEqual(manifest["policy"]["claude_verifier_model_default"], "claude-haiku-5-5")
         self.assertFalse(manifest["policy"]["codex_native_subagents_allowed"])
         self.assertTrue(manifest["policy"]["workers_must_be_herdr_spawned"])
@@ -888,7 +888,7 @@ class RolePackTests(unittest.TestCase):
                 self.assertIn("one active writing attempt", reference)
                 self.assertLess(len(reference.splitlines()), 100)
         manifest = json.loads((ROOT / "manifest.json").read_text(encoding="utf8"))
-        self.assertEqual(manifest["version"], "2.8.2")
+        self.assertEqual(manifest["version"], "2.9.0")
         self.assertTrue(manifest["policy"]["relay_runtime_not_required"])
 
     # --- Lead mode: one agent holds Manager + Delegator duties ---

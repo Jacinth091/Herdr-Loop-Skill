@@ -37,14 +37,20 @@ Before creating a release tag, maintainers must verify:
 ## 4. Step-by-Step Release Procedure
 
 ### Step 1: Update Version & Changelog
-Update `manifest.json` and `package.json` to the target version `X.Y.Z`.
-Move the notes in `CHANGELOG.md` from `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`.
+Update `manifest.json` and `package.json` to the target version `X.Y.Z`. The version is also asserted literally in `tests/test_pack.py` (two assertions) and `tests/test_progress_view.py` (one); bump them in the same commit, or the suite fails before the tag can be pushed.
+Move the notes in `CHANGELOG.md` from `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`. Leave forward-looking `### Planned` items under `[Unreleased]`: released sections carry only what shipped.
 
-Commit the changes:
+`main` is protected by the `Protect main` ruleset, which requires a pull request plus the two `Test & Validate` status checks. A direct `git push origin main` is rejected with `push declined due to repository rule violations`, so land the release commit through a PR:
+
 ```bash
+git checkout -b chore/release-vX.Y.Z
 git commit -am "chore(release): prepare vX.Y.Z"
-git push origin main
+git push -u origin chore/release-vX.Y.Z
+gh pr create --base main --title "chore(release): prepare vX.Y.Z"
+gh pr merge --merge --delete-branch   # once both checks pass
 ```
+
+Merge the PR **before** Step 3. The release workflow verifies that the tagged commit is already an ancestor of `origin/main` and aborts without publishing otherwise, so a tag pushed from an unmerged branch can never release.
 
 ### Step 2: Test Packaging Locally
 Run the packaging utility to build and verify assets:

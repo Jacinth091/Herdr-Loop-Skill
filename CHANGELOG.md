@@ -7,6 +7,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Planned
+- Native Herdr Signals and Relay transport evaluation once upstream becomes available.
+- Extended token billing metrics comparison between Markdown and SQLite state backends.
+
+---
+
+## [2.9.0] - 2026-10-17
+
 ### Added
 - **Generated command reference:** `herdr_ledger.py --run-dir <run> reference` prints the per-role command lists and every command's exact arguments, derived from the CLI parser and role maps rather than hand-written prose; `reference --role <role>` prints just one role's list (about 1 KB for a verifier, versus 6 KB for the full reference). The full text is committed as `references/command-reference.md`, and a test fails if it drifts from the CLI. The duplicated command listings in `docs/OPERATIONS.md` and the controller `SKILL.md` are replaced by pointers to it.
 - **`--json` reads with a read-cost proxy:** `status`, `next`, `task-show`, `events`, `recover` and `packet` accept `--json`; each payload carries `read_cost` (`text_bytes`, `approx_tokens`). Plain `status` also reports `view_bytes`/`view_tokens`, the measured cost of the detailed human view.
@@ -26,10 +34,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - **Unnamed pane agents now name their own remedy:** `observe_herdr` and `observe_recipient` refuse an agent that has no registered name with `HERDR_AGENT_UNNAMED`, naming the pane and the exact `herdr agent rename <pane> <agent-name>` fix (a pane that already hosts an agent is named, never re-started). Previously this dead end surfaced as a generic `HERDR_IDENTITY_MISMATCH` with no next step.
 - **A cleared agent name is no longer reported as a transport failure:** a missing name now probes its pane before refusing. `herdr agent not found` for an agent whose name Herdr cleared (it clears a name when the agent exits, is released, or is replaced) was previously reported as `HERDR_TRANSPORT_UNAVAILABLE` with the reason truncated at 100 characters, because the CLI writes its error object to stderr and only stdout was parsed. Structured CLI errors are now parsed from either stream, so a name that is gone while its pane still hosts the agent is refused as `HERDR_AGENT_UNNAMED` with the exact `herdr agent rename <pane> <name>` fix, and a name whose pane is gone is refused as `HERDR_ERROR` with a start command instead.
 - **CI now covers the declared Python floor:** the required `test` job runs 3.13 (newest), and a new informational `Python Floor` job runs 3.10 (the documented minimum) on Ubuntu and Windows. The required job keeps its exact name because protected `main` matches required checks by name. Previously only 3.11 ran, so both the floor the docs promise and the newest interpreter in use were unverified.
-
-### Planned
-- Native Herdr Signals and Relay transport evaluation once upstream becomes available.
-- Extended token billing metrics comparison between Markdown and SQLite state backends.
 
 ---
 
