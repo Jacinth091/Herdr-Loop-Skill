@@ -219,6 +219,26 @@ class RolePackTests(unittest.TestCase):
         self.assertIn("@herdr-manager", manager["prompt"])
         self.assertIn("@herdr-worker", worker["prompt"])
 
+    def test_opencode_provider_model_id_is_accepted(self):
+        # OpenCode names models as provider/model (official docs); the binder must accept it.
+        self.config["agents"]["workers"][0]["kind"] = "opencode"
+        self.config["agents"]["workers"][0]["model"] = "anthropic/claude-haiku-4-5"
+        self.save()
+        result = self.bind()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        run_dir = self.repo / ".herdr-loop" / "feature-example"
+        worker = next(a for a in json.loads((run_dir / "ACTIVATION.json").read_text(encoding="utf8"))["agents"] if a["role"] == "worker")
+        self.assertEqual(worker["model"], "anthropic/claude-haiku-4-5")
+        self.assertIn("REQUIRED MODEL: anthropic/claude-haiku-4-5", worker["prompt"])
+
+    def test_unsafe_model_id_is_still_rejected(self):
+        for bad in ("openai/gpt/5", "anthropic; rm -rf /", "anthropic/ claude"):
+            with self.subTest(model=bad):
+                self.config["agents"]["workers"][0]["kind"] = "opencode"
+                self.config["agents"]["workers"][0]["model"] = bad
+                self.save()
+                self.assertNotEqual(self.bind().returncode, 0)
+
     def test_parallel_budget_requires_explicit_authorization(self):
         for count in (2, 3):
             with self.subTest(workers=count):

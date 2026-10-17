@@ -35,7 +35,9 @@ KINDS = {role: _KINDS[role] for role in herdr_ledger.ROLE_ORDER}
 KNOWN_KINDS = {"claude", "codex", "agy", "opencode"}
 NAME = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 RUN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")
-MODEL_ID = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$")
+# One optional slash allows OpenCode's provider/model form (for example
+# anthropic/claude-haiku-4-5); every other CLI uses a bare model ID.
+MODEL_ID = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}(?:/[a-zA-Z0-9][a-zA-Z0-9._-]{0,79})?$")
 TITLE_MAX = 90
 OUTCOME_MAX = 240
 PREFERENCES = {"codex_worker": ("gpt-6-luna", "xhigh"),

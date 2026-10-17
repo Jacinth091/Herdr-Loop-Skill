@@ -11,6 +11,7 @@ A model **preference** is not evidence that the model was selected. Check your l
 | Dedicated tester / Verifier (Claude) | `claude` | `claude-haiku-5-5` | CLI default | Execute approved serial verification at exact integration SHA; no code edits |
 | Critic (Claude) | `claude` | `claude-sonnet-5-5` | CLI default | Read-only plan/diff critique, no tests |
 | Implementation worker (Agy) | `agy` | Existing supported local model | As locally configured | Governed: scoped sandboxed code changes, no tests; standalone self-checks follow `herdr-worker` |
+| Implementation worker (OpenCode) | `opencode` | Existing supported local model; official IDs use the `provider/model` form, for example `anthropic/claude-haiku-4-5` | As locally configured; effort is not observable | Governed: scoped code changes, no tests; standalone self-checks follow `herdr-worker` |
 
 A Claude Haiku agent may be an **implementation Worker** or a **dedicated tester (Verifier)**, never both in the same assignment. The optional tester is a separately registered Herdr agent in its own pane, receives `ROLE_READY`, then `VERIFY_START` with the exclusive lock, and writes `VERIFY_READY` evidence. The Delegator can handle a trivial approved test without spawning a Verifier. This is not a separate `herdr-tester` skill: reuse `herdr-verifier`. The Sonnet Critic remains read-only and cannot run tests.
 
@@ -38,7 +39,10 @@ herdr agent start worker_t01 --kind codex --pane <actual-pane-id> -- -m gpt-6-lu
 herdr agent start worker_t02 --kind claude --pane <actual-pane-id> -- --model claude-haiku-5-5
 herdr agent start verifier_t01 --kind claude --pane <actual-pane-id> -- --model claude-haiku-5-5
 herdr agent start critic_t01 --kind claude --pane <actual-pane-id> -- --model claude-sonnet-5-5
+herdr agent start worker_t01 --kind opencode --pane <actual-pane-id> -- --model <provider>/<model>
 ```
+
+OpenCode model IDs may contain a slash (`provider/model`), which `tools/role_bind.py` accepts. Pass the value as a single argument. Effort is observable only for Codex (`-c model_reasoning_effort=`), so omit `--expected-effort` for OpenCode and Agy instead of reserving an expectation `attempt-attach` can never confirm.
 
 The quoted `-c` parameter is a TOML value; shell quoting varies between POSIX and PowerShell. A Herdr `agent get` result validates process identity only; it does **not** validate the model or effort. Inspect the agent's actual Codex `/model` or Claude `/status` display (or trustworthy session metadata) and have the Worker record the observed selection in `READY.md` before `TASK_START`. If the CLI cannot expose verifiable model/effort, treat the override as unconfirmed and stop rather than guessing. Adapt quoting using CLI `--help` and confirm the **effective runtime selection**, not simply the spawn command's success. On Windows, prefer passing a literal argument array to the appropriate program instead of building an unsafe shell command. In case the Codex effort override is not honored, **stop before `TASK_START`**; the worker must report `MODEL_OVERRIDE_NOT_APPLIED`. No silent downgrade and no mutation of global Codex configuration.
 
