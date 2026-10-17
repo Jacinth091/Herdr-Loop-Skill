@@ -590,6 +590,8 @@ def main(argv=None):
                 held_lock = lock
                 active_backend, selector = run_backend.get_active_backend(run_dir)
             requested_backend = config.get("state_backend")
+            if "state_backend" not in config:
+                print("NOTICE state_backend not set; binding markdown. Ask the human Markdown or SQLite before binding (engineering-loop §4).", file=sys.stderr)
 
             if active_backend is not None:
                 if active_backend == "sqlite" and selector is None:
