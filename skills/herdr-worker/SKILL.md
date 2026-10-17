@@ -50,7 +50,7 @@ Only a governed brief with explicit human/Manager authorization may use a non-co
 
 ## Model and CLI notes
 
-- In Governed Mode, confirm the assigned model/effort in the live CLI before `ROLE_READY`; Codex Worker defaults and Claude Haiku preferences are recommendations only when the packet requests them. If an override is wrong or unconfirmed, report `BLOCKED: MODEL_OVERRIDE_NOT_APPLIED` and do not accept `TASK_START`.
+- In Governed Mode, confirm the assigned model/effort in the live CLI before `ROLE_READY`; Codex Worker defaults, Claude Haiku preferences and OpenCode model IDs are recommendations only when the packet requests them. If an override is wrong or unconfirmed, report `BLOCKED: MODEL_OVERRIDE_NOT_APPLIED` and do not accept `TASK_START`.
 - Standalone Mode keeps the already-running CLI model; it does not apply model overrides.
 - Use normal permission prompts for approval-path checks and tasks that require native prompts. For a human-selected smooth unattended run, Claude Code may use session Auto mode; Agy may use `--sandbox --dangerously-skip-permissions` only in a task-specific disposable worktree with no unrelated changes or secrets, and only after confirming the sandbox is active. Agy's flag approves every tool call, so it cannot prove native approval; never use either automatic mode after a denial or sandbox failure.
 - Codex must never use `spawn_agent`, internal subagents/teams, child threads, nested CLI, or any other delegation to satisfy a Herdr role.

@@ -136,9 +136,15 @@ herdr agent start critic_t01 --kind claude --pane <pane-id> -- --model claude-so
 # Agy CLI Worker (normal configured permissions; check flags on the target platform):
 herdr agent start worker_t01 --kind agy --pane <pane-id>
 
-# OpenCode Worker (any configured provider/model; verify the effective model):
+# OpenCode Worker (provider/model set in the checkout's opencode.json; verify the effective model):
 herdr agent start worker_t01 --kind opencode --pane <pane-id>
 ```
+
+**OpenCode model placement.** OpenCode's v2 TUI has no `--model` flag. Before `herdr agent start --kind opencode`, the Delegator writes `opencode.json` (`{"$schema":"https://opencode.ai/config.json","model":"<provider/model>"}`) into that agent's checkout and adds `opencode.json` to `.git/info/exclude`. If the repository tracks `opencode.json`, stop with `BLOCKED: OPENCODE_PROJECT_CONFIG_PRESENT`. Start with no arguments after `--`.
+
+**OpenCode-only runs.** Every role can be an OpenCode agent: Lead, Delegator, Manager, Worker, Verifier and Critic. Start from `examples/roles.opencode.json` (Lead run with OpenCode Worker and Verifier, no Critic). Each OpenCode agent needs its own unique name, because Herdr names every OpenCode pane `opencode`. Use `herdr agent rename <pane> <name>` for an existing pane, or the name given in `herdr agent start`.
+
+**Binding an existing OpenCode pane.** Put its `pane_id`, `workspace_id` and `worktree` into `roles.json` and give it a unique name. Make sure its checkout has the placed `opencode.json`, restarting the pane if it was launched before that file existed. Then activate the role as usual.
 
 Governed work and approval-path checks use Agy's normal permission flow. The optional smooth unattended mode is limited to a human-selected disposable worktree, with Agy sandbox active before `--dangerously-skip-permissions` is used; see [Agy worker launch](references/herdr-cli.md) and [Native permission capability by harness](references/permission-capabilities.md). Never use it to recover from a denial or sandbox failure. OpenCode loads a skill by mentioning `@skill-id` or via its `skill` tool; confirm the installed CLI's effective model and native approval behavior before relying on them.
 

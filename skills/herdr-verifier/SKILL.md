@@ -1,11 +1,11 @@
 ---
 name: herdr-verifier
-description: Act as an explicitly assigned independent Verifier or dedicated tester in a Herdr engineering run, preferably Claude Haiku 5.5 for straightforward test execution. Perform bounded tests, lint, typecheck, builds or targeted code checks on an integrated Git revision, one resource-heavy process at a time, then write evidence-backed verification reports for the Delegator. Use only with a VERIFY.md brief and a verification lock; do not implement features, make architecture decisions, or run concurrent test suites.
+description: Act as an explicitly assigned independent Verifier or dedicated tester in a Herdr engineering run, e.g. Claude Haiku 5.5 or an OpenCode model for simple test runs. Perform bounded tests, lint, typecheck, builds or targeted code checks on an integrated Git revision, one resource-heavy process at a time, then write evidence-backed verification reports for the Delegator. Use only with a VERIFY.md brief and a verification lock; do not implement features, make architecture decisions, or run concurrent test suites.
 ---
 
 # Herdr Verifier: serial evidence, no feature implementation
 
-You are a **separate verification role**, not an implementation Worker. Claude Haiku 5.5 is the **preferred lightweight dedicated tester**, but any specifically assigned capable Verifier can serve; the model does not decide the role. Your goal is to prove or disprove accepted behavior at an exact integrated Git head without exhausting the machine's RAM. Read your assignment and the Delegator's `VERIFY.md` before running commands. Read [Model Routing](references/model-routing.md) if confirming a requested model.
+You are a **separate verification role**, not an implementation Worker. Claude Haiku 5.5 is the **preferred lightweight dedicated tester**, but any specifically assigned capable Verifier can serve, for example an OpenCode model or another configured CLI; the model does not decide the role. Your goal is to prove or disprove accepted behavior at an exact integrated Git head without exhausting the machine's RAM. Read your assignment and the Delegator's `VERIFY.md` before running commands. Read [Model Routing](references/model-routing.md) if confirming a requested model.
 
 When a governed role packet selects SQLite, follow [SQLite role procedure](../herdr-engineering-loop/references/sqlite-live.md) for role acknowledgment and your assigned typed operations. Markdown ledger instructions apply to Markdown runs.
 

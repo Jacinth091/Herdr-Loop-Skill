@@ -10,7 +10,12 @@ A model **preference** is not evidence that the model was selected. Check your l
 | Implementation worker (Claude) | `claude` | `claude-haiku-5-5` | CLI default | Lighter scoped code changes, no tests |
 | Dedicated tester / Verifier (Claude) | `claude` | `claude-haiku-5-5` | CLI default | Execute approved serial verification at exact integration SHA; no code edits |
 | Critic (Claude) | `claude` | `claude-sonnet-5-5` | CLI default | Read-only plan/diff critique, no tests |
-| Implementation worker (Agy) | `agy` | Existing supported local model | As locally configured | Scoped code changes in sandbox, no tests |
+| Implementation worker (Agy) | `agy` | Existing supported local model | As locally configured | Governed: scoped sandboxed code changes, no tests; standalone self-checks follow `herdr-worker` |
+| Implementation worker (OpenCode) | `opencode` | `opencode/deepseek-v4.1-flash-free` | As configured in `opencode.json` | Scoped code changes, no tests. Free models can be rate-limited for a whole session: keep a fallback worker kind (e.g. Claude Haiku) ready |
+| Dedicated tester / Verifier (OpenCode) | `opencode` | `opencode/glm-5.3-flash-free` | As configured in `opencode.json` | Serial verification at exact integration SHA; no code edits. Same rate-limit caveat: keep a fallback verifier ready |
+| Critic (OpenCode) | `opencode` | No default; pick a stronger model than a flash-tier free model | As configured in `opencode.json` | Read-only critique, no tests. A flash-tier free model is weak for adversarial review |
+
+OpenCode model IDs are `provider/model` with no `#variant` suffix. Free model lineups change; check `opencode models` before choosing. The recommended OpenCode IDs are preferences, not enforced defaults.
 
 A Claude Haiku agent may be an **implementation Worker** or a **dedicated tester (Verifier)**, never both in the same assignment. The optional tester is a separately registered Herdr agent in its own pane, receives `ROLE_READY`, then `VERIFY_START` with the exclusive lock, and writes `VERIFY_READY` evidence. The Delegator can handle a trivial approved test without spawning a Verifier. This is not a separate `herdr-tester` skill: reuse `herdr-verifier`. The Sonnet Critic remains read-only and cannot run tests.
 
@@ -39,6 +44,14 @@ herdr agent start worker_t02 --kind claude --pane <actual-pane-id> -- --model cl
 herdr agent start verifier_t01 --kind claude --pane <actual-pane-id> -- --model claude-haiku-5-5
 herdr agent start critic_t01 --kind claude --pane <actual-pane-id> -- --model claude-sonnet-5-5
 ```
+
+OpenCode v2 TUI has no `--model` flag. Apply the model before launch: write `opencode.json` in the agent's checkout with `{"$schema":"https://opencode.ai/config.json","model":"opencode/deepseek-v4.1-flash-free"}`, add `opencode.json` to `.git/info/exclude`, then start with no arguments after `--`:
+
+```text
+herdr agent start worker_t03 --kind opencode --pane <actual-pane-id>
+```
+
+If the repository tracks `opencode.json`, stop with `BLOCKED: OPENCODE_PROJECT_CONFIG_PRESENT`. Restart an OpenCode pane launched before the file existed. The ledger observes the OpenCode model from the live session export, or from `opencode debug config` before the first prompt; effort and variant are not checked. Give each OpenCode agent a unique name, because Herdr names every OpenCode pane `opencode`.
 
 The quoted `-c` parameter is a TOML value; shell quoting varies between POSIX and PowerShell. A Herdr `agent get` result validates process identity only; it does **not** validate the model or effort. Inspect the agent's actual Codex `/model` or Claude `/status` display (or trustworthy session metadata) and have the Worker record the observed selection in `READY.md` before `TASK_START`. If the CLI cannot expose verifiable model/effort, treat the override as unconfirmed and stop rather than guessing. Adapt quoting using CLI `--help` and confirm the **effective runtime selection**, not simply the spawn command's success. On Windows, prefer passing a literal argument array to the appropriate program instead of building an unsafe shell command. In case the Codex effort override is not honored, **stop before `TASK_START`**; the worker must report `MODEL_OVERRIDE_NOT_APPLIED`. No silent downgrade and no mutation of global Codex configuration.
 

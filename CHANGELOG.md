@@ -7,9 +7,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+### Added
+- OpenCode model IDs (`provider/model`, no `#variant`) are accepted in `roles.json` and recommended for Worker, Verifier and Critic.
+- `examples/roles.opencode.json`: an all-OpenCode Lead run with an OpenCode Worker and Verifier.
+
 ### Changed
+- OpenCode models are applied through the checkout's `opencode.json` before launch, and the live OpenCode model is observed (session export, or `opencode debug config` before the first prompt).
 - Setup now treats the Markdown/SQLite choice as an explicit human gate before role binding (engineering-loop, lead, delegator).
 - Skills note that `tools/` runs from the pack source checkout or release package, not the installed skill directory.
+- Fixed a UTF-8 issue in the ledger.
 
 ### Planned
 - Native Herdr Signals and Relay transport evaluation once upstream becomes available.

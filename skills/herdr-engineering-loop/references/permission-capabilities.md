@@ -30,7 +30,8 @@ Official references: [Claude Code Auto mode](https://claude.com/resources/articl
 ## OpenCode
 
 - OpenCode hosts many providers, so the effective model and permission behavior depend on the configured provider and session. Treat approval capability as `UNVERIFIED` until the running session visibly offers a native request for the exact command and you confirm its result.
-- Load the assigned role skill by mentioning `@skill-id` (or through the `skill` tool) and stay inside that role. Do not enable an auto-approve/"always allow" setting, or edit OpenCode configuration, to test or obtain approval.
+- Load the assigned role skill by mentioning `@skill-id` (or through the `skill` tool) and stay inside that role. Do not enable an auto-approve/"always allow" setting, or edit OpenCode configuration, to test or obtain approval. The one exception is placing the run's `opencode.json` model setting before launch.
+- `--auto` (auto-approve every request that is not denied) is only a human-selected unattended mode in a disposable worktree, like Agy's sandboxed mode. Never use it to recover from a denial. Native approval stays `UNVERIFIED`.
 - Official reference: [OpenCode skills](https://opencode.ai/v2/docs/skills).
 
 ## Other or unknown CLI kinds
