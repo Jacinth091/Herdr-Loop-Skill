@@ -126,7 +126,7 @@ class HumanProgressTests(unittest.TestCase):
 
     def test_full_pack_docs_use_user_labels(self):
         manifest = json.loads((ROOT / 'manifest.json').read_text(encoding='utf-8'))
-        self.assertEqual(manifest['version'], '2.8.2')
+        self.assertEqual(manifest['version'], '2.9.0')
         self.assertTrue(manifest['policy']['task_ids_internal_only_in_user_updates'])
         self.assertIn('tools/progress_view.py', manifest['optional_tools'])
         for skill in ('herdr-manager', 'herdr-delegator', 'herdr-engineering-loop'):

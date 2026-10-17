@@ -37,8 +37,8 @@ Before creating a release tag, maintainers must verify:
 ## 4. Step-by-Step Release Procedure
 
 ### Step 1: Update Version & Changelog
-Update `manifest.json` and `package.json` to the target version `X.Y.Z`.
-Move the notes in `CHANGELOG.md` from `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`.
+Update `manifest.json` and `package.json` to the target version `X.Y.Z`. The version is also asserted literally in `tests/test_pack.py` (two assertions) and `tests/test_progress_view.py` (one); bump them in the same commit, or the suite fails before the tag can be pushed.
+Move the notes in `CHANGELOG.md` from `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`. Leave forward-looking `### Planned` items under `[Unreleased]`: released sections carry only what shipped.
 
 Commit the changes:
 ```bash
